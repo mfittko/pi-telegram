@@ -222,6 +222,25 @@ type RuntimePiHarnessOptions = {
 function createRuntimePiHarness(options: RuntimePiHarnessOptions = {}) {
   const handlers = new Map<string, RuntimeHarnessHandler>();
   const commands = new Map<string, RuntimeHarnessCommand>();
+  const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+  const events = {
+    on(event: string, handler: (payload: unknown) => void) {
+      const current = eventHandlers.get(event) ?? [];
+      current.push(handler);
+      eventHandlers.set(event, current);
+      return () => {
+        const next = (eventHandlers.get(event) ?? []).filter((entry) => entry !== handler);
+        if (next.length === 0) {
+          eventHandlers.delete(event);
+          return;
+        }
+        eventHandlers.set(event, next);
+      };
+    },
+    emit(event: string, payload: unknown) {
+      for (const handler of eventHandlers.get(event) ?? []) handler(payload);
+    },
+  };
   const pi = {
     on: (event: string, handler: RuntimeHarnessHandler) => {
       handlers.set(event, handler);
@@ -233,12 +252,13 @@ function createRuntimePiHarness(options: RuntimePiHarnessOptions = {}) {
     sendUserMessage: options.sendUserMessage ?? (() => {}),
     getCommands: options.getCommands ?? (() => []),
     getThinkingLevel: options.getThinkingLevel ?? (() => "medium"),
+    events,
     ...(options.setModel ? { setModel: options.setModel } : {}),
     ...(options.setThinkingLevel
       ? { setThinkingLevel: options.setThinkingLevel }
       : {}),
   };
-  return { handlers, commands, pi: pi as never };
+  return { handlers, commands, pi: pi as never, events };
 }
 
 test("Runtime facade binds grouped operations to one bridge state", () => {
@@ -703,6 +723,115 @@ test("Extension runtime finalizes a drafted preview into the final Telegram repl
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     mock.timers.reset();
+    restoreFetch();
+    await telegramConfig.restore();
+  }
+});
+
+
+test("Extension runtime mirrors exact parent no-turn async follow-up back to Telegram", async () => {
+  const telegramConfig = await createRuntimeTelegramConfigFixture();
+  let resolveDispatch: (() => void) | undefined;
+  const dispatched = new Promise<void>((resolve) => {
+    resolveDispatch = resolve;
+  });
+  const sentTexts: string[] = [];
+  const sentBodies: Array<Record<string, unknown>> = [];
+  const { handlers, commands, pi, events } = createRuntimePiHarness({
+    sendUserMessage: () => {
+      resolveDispatch?.();
+    },
+  });
+  let getUpdatesCalls = 0;
+  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    const body = parseJsonRequestBody(init);
+    if (method === "deleteWebhook") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    if (method === "getUpdates") {
+      getUpdatesCalls += 1;
+      if (getUpdatesCalls === 1) {
+        return createRuntimeTelegramApiResponse([
+          {
+            _: "other",
+            update_id: 1,
+            message: {
+              message_id: 7,
+              chat: { id: 99, type: "private" },
+              from: { id: 77, is_bot: false, first_name: "Test" },
+              text: "run async review",
+            },
+          },
+        ]);
+      }
+      throw new DOMException("stop", "AbortError");
+    }
+    if (method === "sendMessage") {
+      sentTexts.push(String(body?.text ?? ""));
+      sentBodies.push(body ?? {});
+      return createRuntimeTelegramApiResponse({
+        message_id: 100 + sentTexts.length,
+      });
+    }
+    if (method === "sendChatAction") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    if (method === "editMessageText") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    if (method === "sendMessageDraft") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    throw new Error(`Unexpected Telegram API method: ${method}`);
+  });
+  try {
+    await telegramConfig.write({
+      botToken: "123:abc",
+      allowedUserId: 77,
+      lastUpdateId: 0,
+    });
+    (await getRuntimeTelegramExtension())(pi);
+    const ctx = createRuntimeExtensionContext();
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("telegram-connect")?.handler("", ctx);
+    await dispatched;
+    await handlers.get("agent_start")?.({}, ctx);
+    events.emit("subagent:async-started", { id: "run-1" });
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    events.emit("subagent:async-complete", { id: "run-1" });
+    await handlers.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "assistant",
+            content: [{
+              type: "text",
+              text: `Async review finished.
+
+<!-- telegram_button label="Fix review findings"
+Fix the actionable review findings on the current branch.
+-->`,
+            }],
+          },
+        ],
+      },
+      ctx,
+    );
+    assert.equal(sentTexts.length, 1);
+    assert.match(sentTexts[0] ?? "", /Async review finished\./);
+    assert.deepEqual(sentBodies[0]?.reply_parameters, {
+      message_id: 7,
+      allow_sending_without_reply: true,
+    });
+    assert.deepEqual(sentBodies[0]?.reply_markup, {
+      inline_keyboard: [[{
+        text: "Fix review findings",
+        callback_data: "tgbtn:0",
+      }]],
+    });
+    await handlers.get("session_shutdown")?.({}, ctx);
+  } finally {
     restoreFetch();
     await telegramConfig.restore();
   }

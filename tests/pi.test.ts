@@ -20,7 +20,7 @@ import {
 type PiRuntimeApiHarness = Parameters<
   typeof createExtensionApiRuntimePorts
 >[0] & {
-  events: string[];
+  log: string[];
 };
 
 type PiRuntimeModel = Parameters<PiRuntimeApiHarness["setModel"]>[0];
@@ -35,27 +35,33 @@ function getHarnessModelId(model: PiRuntimeModel): string {
 
 test("Pi API runtime ports bind methods without losing receiver context", async () => {
   const api: PiRuntimeApiHarness = {
-    events: [],
+    log: [],
+    events: {
+      on() {
+        return () => {};
+      },
+      emit() {},
+    },
     sendUserMessage(content) {
-      this.events.push(`send:${String(content)}`);
+      this.log.push(`send:${String(content)}`);
     },
     async exec(command, args) {
-      this.events.push(`exec:${command}:${args.join(",")}`);
+      this.log.push(`exec:${command}:${args.join(",")}`);
       return { stdout: "ok", stderr: "", code: 0, killed: false };
     },
     getCommands() {
-      this.events.push("commands");
+      this.log.push("commands");
       return [];
     },
     getThinkingLevel() {
-      this.events.push("get-thinking");
+      this.log.push("get-thinking");
       return "high";
     },
     setThinkingLevel(level) {
-      this.events.push(`thinking:${String(level)}`);
+      this.log.push(`thinking:${String(level)}`);
     },
     async setModel(model) {
-      this.events.push(`model:${getHarnessModelId(model)}`);
+      this.log.push(`model:${getHarnessModelId(model)}`);
       return true;
     },
   };
@@ -71,7 +77,8 @@ test("Pi API runtime ports bind methods without losing receiver context", async 
   assert.equal(runtime.getThinkingLevel(), "high");
   runtime.setThinkingLevel("low");
   assert.equal(await runtime.setModel(createHarnessModel("gpt-5")), true);
-  assert.deepEqual(api.events, [
+  assert.equal(runtime.events, api.events);
+  assert.deepEqual(api.log, [
     "send:hello",
     "exec:cmd:arg",
     "commands",

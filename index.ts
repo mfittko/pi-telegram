@@ -5,6 +5,7 @@
  */
 
 import * as Api from "./lib/api.ts";
+import * as AsyncNotify from "./lib/async-notify.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
 import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
@@ -46,6 +47,7 @@ type RuntimeTelegramQueueItem = Queue.TelegramQueueItem<Pi.ExtensionContext>;
 export default function (pi: Pi.ExtensionAPI) {
   const piRuntime = Pi.createExtensionApiRuntimePorts(pi);
   const {
+    events,
     getCommands,
     getThinkingLevel,
     sendUserMessage,
@@ -68,6 +70,10 @@ export default function (pi: Pi.ExtensionAPI) {
       getActiveTurnChatId: activeTurnRuntime.getChatId,
       getAllowedUserId: configStore.getAllowedUserId,
     });
+  const asyncFollowupRuntime = AsyncNotify.createTelegramAsyncFollowupRuntime({
+    getActiveTurn: activeTurnRuntime.get,
+    isCurrentOwner: lockOwnershipGuard.ownsCurrentProcess,
+  });
   const buttonActionStore = OutboundHandlers.createTelegramButtonActionStore();
   const pendingModelSwitchStore =
     Model.createPendingModelSwitchStore<
@@ -427,12 +433,21 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: lockedPollingRuntime.suspend,
     recordRuntimeEvent,
   });
+  const asyncFollowupSessionHooks =
+    AsyncNotify.createTelegramAsyncFollowupSessionHooks({
+      clear: asyncFollowupRuntime.clear,
+    });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
-    queueSessionLifecycle,
+    Lifecycle.appendTelegramLifecycleHooks(queueSessionLifecycle, {
+      onSessionStart: asyncFollowupSessionHooks.onSessionStart,
+      onSessionShutdown: asyncFollowupSessionHooks.onSessionShutdown,
+    }),
     { onSessionStart: lockedPollingRuntime.onSessionStart },
   );
 
   // --- Extension API Bindings ---
+
+  AsyncNotify.bindTelegramAsyncFollowupEvents(events, asyncFollowupRuntime);
 
   OutboundAttachments.registerTelegramOutboundAttachmentTool(pi, {
     getActiveTurn: activeTurnRuntime.get,
@@ -524,6 +539,10 @@ export default function (pi: Pi.ExtensionAPI) {
     getDefaultChatId: proactivePushChatIdGetter,
     isProactivePushEnabled,
     recordRuntimeEvent,
+    peekPendingAsyncFollowupTarget:
+      asyncFollowupRuntime.peekPendingFollowupTarget,
+    consumePendingAsyncFollowupTarget:
+      asyncFollowupRuntime.consumePendingFollowupTarget,
     getActiveToolExecutions: lifecycle.getActiveToolExecutions,
     setActiveToolExecutions: lifecycle.setActiveToolExecutions,
     triggerPendingModelSwitchAbort: modelSwitchController.triggerPendingAbort,

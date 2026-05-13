@@ -805,6 +805,14 @@ export interface TelegramAgentEndRuntimeDeps<
     error: unknown,
     details?: Record<string, unknown>,
   ) => void;
+  peekPendingAsyncFollowupTarget?: () => {
+    chatId: number;
+    replyToMessageId: number | undefined;
+  } | undefined;
+  consumePendingAsyncFollowupTarget?: () => {
+    chatId: number;
+    replyToMessageId: number | undefined;
+  } | undefined;
 }
 
 export interface TelegramAgentEndHookRuntimeDeps<
@@ -847,6 +855,8 @@ export interface TelegramAgentEndHookRuntimeDeps<
   getDefaultChatId?: TelegramAgentEndRuntimeDeps<TTurn>["getDefaultChatId"];
   isProactivePushEnabled?: TelegramAgentEndRuntimeDeps<TTurn>["isProactivePushEnabled"];
   recordRuntimeEvent?: TelegramAgentEndRuntimeDeps<TTurn>["recordRuntimeEvent"];
+  peekPendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["peekPendingAsyncFollowupTarget"];
+  consumePendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumePendingAsyncFollowupTarget"];
 }
 
 export interface TelegramAgentEndHookEvent<TMessage> {
@@ -938,10 +948,13 @@ export function createTelegramAgentEndHook<
   ): Promise<void> {
     const turn = deps.getActiveTurn();
     const proactiveEnabled = deps.isProactivePushEnabled?.() ?? false;
+    const asyncFollowupEnabled = !!deps.consumePendingAsyncFollowupTarget;
     await handleTelegramAgentEndRuntime({
       turn,
       assistant:
-        turn || proactiveEnabled ? deps.extractAssistant(event.messages) : {},
+        turn || proactiveEnabled || asyncFollowupEnabled
+          ? deps.extractAssistant(event.messages)
+          : {},
       preserveQueuedTurnsAsHistory: deps.getPreserveQueuedTurnsAsHistory(),
       resetRuntimeState: deps.resetRuntimeState,
       updateStatus: () => deps.updateStatus(ctx),
@@ -966,6 +979,8 @@ export function createTelegramAgentEndHook<
       getDefaultChatId: deps.getDefaultChatId,
       isProactivePushEnabled: deps.isProactivePushEnabled,
       recordRuntimeEvent: deps.recordRuntimeEvent,
+      peekPendingAsyncFollowupTarget: deps.peekPendingAsyncFollowupTarget,
+      consumePendingAsyncFollowupTarget: deps.consumePendingAsyncFollowupTarget,
     });
   };
 }
@@ -997,7 +1012,23 @@ export async function handleTelegramAgentEndRuntime<
     preserveQueuedTurnsAsHistory: deps.preserveQueuedTurnsAsHistory,
   });
   if (!turn) {
-    if (
+    const asyncFollowupTarget = deps.peekPendingAsyncFollowupTarget?.();
+    if (asyncFollowupTarget && finalText && !assistant.errorMessage) {
+      try {
+        await deps.sendMarkdownReply(
+          asyncFollowupTarget.chatId,
+          asyncFollowupTarget.replyToMessageId,
+          finalText,
+          { replyMarkup },
+        );
+      } catch (error) {
+        deps.recordRuntimeEvent?.("async-followup", error, {
+          chatId: asyncFollowupTarget.chatId,
+          replyToMessageId: asyncFollowupTarget.replyToMessageId,
+        });
+      }
+      deps.consumePendingAsyncFollowupTarget?.();
+    } else if (
       deps.isProactivePushEnabled?.() &&
       finalText &&
       !assistant.errorMessage

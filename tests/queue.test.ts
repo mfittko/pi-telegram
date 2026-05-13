@@ -894,6 +894,107 @@ test("Agent end runtime sends proactive local result", async () => {
   ]);
 });
 
+
+test("Agent end runtime mirrors exact no-turn async follow-up with reply markup", async () => {
+  const events: unknown[] = [];
+  const replyMarkup = {
+    inline_keyboard: [[{ text: "Fix review findings", callback_data: "tgbtn:1" }]],
+  };
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: {
+      text: `Async review finished.
+
+<!-- telegram_button label="Fix review findings"
+Fix the actionable review findings.
+-->`,
+    },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async (chatId, replyToMessageId, markdown, options) => {
+      events.push({ chatId, replyToMessageId, markdown, replyMarkup: options?.replyMarkup });
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    planOutboundReply: () => ({ markdown: "Async review finished.", replyMarkup }),
+    peekPendingAsyncFollowupTarget: () => ({
+      chatId: 7,
+      replyToMessageId: 11,
+    }),
+    consumePendingAsyncFollowupTarget: () => ({
+      chatId: 7,
+      replyToMessageId: 11,
+    }),
+  });
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    {
+      chatId: 7,
+      replyToMessageId: 11,
+      markdown: "Async review finished.",
+      replyMarkup,
+    },
+    "dispatch",
+  ]);
+});
+
+test("Agent end runtime consumes pending no-turn async mirror only once", async () => {
+  const events: string[] = [];
+  let consumed = false;
+  const deps = {
+    turn: undefined,
+    assistant: { text: "Async review finished." },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async (chatId: number) => {
+      events.push(`markdown:${chatId}`);
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    peekPendingAsyncFollowupTarget: () =>
+      consumed ? undefined : { chatId: 7, replyToMessageId: 11 },
+    consumePendingAsyncFollowupTarget: () => {
+      if (consumed) return undefined;
+      consumed = true;
+      return { chatId: 7, replyToMessageId: 11 };
+    },
+  };
+  await handleTelegramAgentEndRuntime(deps);
+  await handleTelegramAgentEndRuntime(deps);
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    "markdown:7",
+    "dispatch",
+    "reset",
+    "status",
+    "dispatch",
+  ]);
+});
+
 test("Agent end runtime stays silent when Telegram lock moved away", async () => {
   const events: string[] = [];
   const turn: PendingTelegramTurn = createQueueTestPromptTurn({
