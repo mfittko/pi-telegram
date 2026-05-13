@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `[Async Follow-ups]` Telegram-started async `pi-subagents` runs can now mirror the exact later parent no-turn follow-up back to Telegram, preserving the parent message text and inline buttons instead of sending a separate synthesized completion summary.
+- `[Async Follow-ups]` Added `lib/async-notify.ts` to own async run attribution, pending follow-up targets, session clearing, and Pi event-bus binding for Telegram-started async work.
+- `[Queue]` Extended the no-turn `agent_end` delivery path so attributed async parent follow-ups can reuse the existing Markdown/button delivery path with exact `replyMarkup` preservation.
+- `[Tests]` Added focused async-follow-up regression coverage in `tests/async-notify.test.ts`, `tests/queue.test.ts`, and `tests/runtime.test.ts`.
+
 ## 0.10.2: Delete Message Port Hotfix
 
 - `[ctx.deleteMessage()]` Added `deleteMessage()` to `TelegramSectionContext` and `TelegramSectionCallbackContext`. Extensions can now delete the message that triggered a callback — useful for cleaning up confirmation dialogs after the user makes a choice.

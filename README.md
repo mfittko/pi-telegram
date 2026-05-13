@@ -76,6 +76,7 @@ What it feels like:
 - Fire off three tasks while π is busy. They become visible queue items instead of terminal noise.
 - Open Queue from the menu, inspect waiting work, delete stale prompts, or move important work forward.
 - Switch models from Telegram mid-run; the adapter schedules a safe continuation instead of tearing state apart.
+- Start an async review from Telegram, put the phone away, and get the exact parent Pi follow-up back in the same chat — including buttons when the parent follow-up contains them.
 - Send a voice note; an inbound handler transcribes it; π answers in the same chat.
 - Drop a screenshot and ask, "what is broken here?" The image payload reaches π with the local file context.
 - Ask for a generated file; when π calls `telegram_attach`, the artifact returns to Telegram with the next reply.
@@ -210,6 +211,17 @@ Unknown inline-button callbacks are forwarded to π as `[callback] <data>` when 
 Ordinary pi extensions can register structured UI sections that appear in the main Telegram menu and Settings submenu without owning a second poller. Each section gets a narrow typed context with `edit`, `open`, `enqueuePrompt`, `answerCallback`, and `callbackData()` — enough to build interactive Telegram-native surfaces while `pi-telegram` owns transport, callback routing, navigation hierarchy, and diagnostics.
 
 Import from `@llblab/pi-telegram`, call `registerTelegramSection()`, and return a disposer on shutdown. Sections can send interactive messages directly into the chat via `ctx.open()` — confirmation dialogs, approve/deny gates, and multi-step forms live outside the menu hierarchy while callbacks route through the same typed handler. See [`@llblab/pi-telegram-extension-demo`](https://github.com/llblab/pi-telegram-extension-demo) for a working reference and the [Extension Sections Standard](./docs/extension-sections.md) for the full contract.
+
+### Telegram-started async follow-ups
+
+When an async `pi-subagents` run is started from an active Telegram turn, the bridge keeps that run attributed to the originating Telegram chat. When the parent Pi session later emits the no-turn follow-up for that async run, Telegram receives the exact same parent message through the normal Markdown/button delivery path:
+
+- same final text
+- same rendering
+- same inline buttons when present
+- no Telegram-only synthetic completion summary
+
+This is intentionally separate from ambient proactive push. The async path mirrors attributable Telegram-started parent follow-ups; unrelated local/background work stays silent unless proactive push is enabled.
 
 ### Proactive push
 

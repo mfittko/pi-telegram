@@ -29,6 +29,22 @@ export function createAgentStartDedupHook(
   };
 }
 
+export function prependTelegramMessageStartHook(
+  beforeMessage: (message: TelegramLifecycleMessage) => Promise<void> | void,
+  inner: (
+    event: { message: TelegramLifecycleMessage },
+    ctx: ExtensionContext,
+  ) => Promise<void>,
+): (
+  event: { message: TelegramLifecycleMessage },
+  ctx: ExtensionContext,
+) => Promise<void> {
+  return async function onTelegramMessageStart(event, ctx) {
+    await beforeMessage(event.message);
+    await inner(event, ctx);
+  };
+}
+
 export interface TelegramBeforeAgentStartResult {
   systemPrompt?: string;
 }

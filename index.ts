@@ -5,6 +5,7 @@
  */
 
 import * as Api from "./lib/api.ts";
+import * as AsyncNotify from "./lib/async-notify.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
 import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
@@ -46,6 +47,7 @@ type RuntimeTelegramQueueItem = Queue.TelegramQueueItem<Pi.ExtensionContext>;
 export default function (pi: Pi.ExtensionAPI) {
   const piRuntime = Pi.createExtensionApiRuntimePorts(pi);
   const {
+    events,
     getCommands,
     getThinkingLevel,
     sendUserMessage,
@@ -68,6 +70,10 @@ export default function (pi: Pi.ExtensionAPI) {
       getActiveTurnChatId: activeTurnRuntime.getChatId,
       getAllowedUserId: configStore.getAllowedUserId,
     });
+  const asyncFollowupRuntime = AsyncNotify.createTelegramAsyncFollowupRuntime({
+    getActiveTurn: activeTurnRuntime.get,
+    isCurrentOwner: lockOwnershipGuard.ownsCurrentProcess,
+  });
   const buttonActionStore = OutboundHandlers.createTelegramButtonActionStore();
   const pendingModelSwitchStore =
     Model.createPendingModelSwitchStore<
@@ -397,6 +403,7 @@ export default function (pi: Pi.ExtensionAPI) {
     startPolling: pollingRuntime.start,
     stopPolling: pollingRuntime.stop,
     updateStatus,
+    onOwnershipLoss: asyncFollowupRuntime.clear,
     recordRuntimeEvent,
   });
   const queueSessionLifecycle = Queue.createTelegramSessionLifecycleRuntime<
@@ -427,12 +434,21 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: lockedPollingRuntime.suspend,
     recordRuntimeEvent,
   });
+  const asyncFollowupSessionHooks =
+    AsyncNotify.createTelegramAsyncFollowupSessionHooks({
+      clear: asyncFollowupRuntime.clear,
+    });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
-    queueSessionLifecycle,
+    Lifecycle.appendTelegramLifecycleHooks(queueSessionLifecycle, {
+      onSessionStart: asyncFollowupSessionHooks.onSessionStart,
+      onSessionShutdown: asyncFollowupSessionHooks.onSessionShutdown,
+    }),
     { onSessionStart: lockedPollingRuntime.onSessionStart },
   );
 
   // --- Extension API Bindings ---
+
+  AsyncNotify.bindTelegramAsyncFollowupEvents(events, asyncFollowupRuntime);
 
   OutboundAttachments.registerTelegramOutboundAttachmentTool(pi, {
     getActiveTurn: activeTurnRuntime.get,
@@ -524,6 +540,17 @@ export default function (pi: Pi.ExtensionAPI) {
     getDefaultChatId: proactivePushChatIdGetter,
     isProactivePushEnabled,
     recordRuntimeEvent,
+    clearAsyncFollowupState: asyncFollowupRuntime.clear,
+    hasCurrentAsyncFollowupTurn:
+      asyncFollowupRuntime.hasCurrentTurnFollowupTarget,
+    peekPendingAsyncFollowupTarget:
+      asyncFollowupRuntime.peekPendingFollowupTarget,
+    consumePendingAsyncFollowupTarget:
+      asyncFollowupRuntime.consumePendingFollowupTarget,
+    consumeCurrentAsyncFollowupTarget:
+      asyncFollowupRuntime.consumeCurrentTurnFollowupTarget,
+    clearCurrentAsyncFollowupTurn: asyncFollowupRuntime.clearCurrentTurn,
+    resetTransportReplyDedup: Replies.resetTransportReplyDedup,
     getActiveToolExecutions: lifecycle.getActiveToolExecutions,
     setActiveToolExecutions: lifecycle.setActiveToolExecutions,
     triggerPendingModelSwitchAbort: modelSwitchController.triggerPendingAbort,
@@ -533,6 +560,11 @@ export default function (pi: Pi.ExtensionAPI) {
   const agentStartWithDedupReset = Lifecycle.createAgentStartDedupHook(
     agentLifecycleHooks.onAgentStart,
   );
+  const messageStartWithAsyncFollowupTracking =
+    Lifecycle.prependTelegramMessageStartHook(
+      asyncFollowupRuntime.handleMessageStart,
+      previewRuntime.onMessageStart,
+    );
   Lifecycle.registerTelegramLifecycleHooks(pi, {
     ...sessionLifecycleRuntime,
     ...agentLifecycleHooks,
@@ -542,7 +574,7 @@ export default function (pi: Pi.ExtensionAPI) {
       isCurrentOwner: lockOwnershipGuard.ownsContext,
     }),
     onModelSelect: currentModelRuntime.onModelSelect,
-    onMessageStart: previewRuntime.onMessageStart,
+    onMessageStart: messageStartWithAsyncFollowupTracking,
     onMessageUpdate: previewRuntime.onMessageUpdate,
   });
 }

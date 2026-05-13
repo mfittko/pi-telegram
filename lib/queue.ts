@@ -805,6 +805,21 @@ export interface TelegramAgentEndRuntimeDeps<
     error: unknown,
     details?: Record<string, unknown>,
   ) => void;
+  clearAsyncFollowupState?: () => void;
+  hasCurrentAsyncFollowupTurn?: () => boolean;
+  peekPendingAsyncFollowupTarget?: () => {
+    chatId: number;
+    replyToMessageId: number | undefined;
+  } | undefined;
+  consumePendingAsyncFollowupTarget?: () => {
+    chatId: number;
+    replyToMessageId: number | undefined;
+  } | undefined;
+  consumeCurrentAsyncFollowupTarget?: () => {
+    chatId: number;
+    replyToMessageId: number | undefined;
+  } | undefined;
+  resetTransportReplyDedup?: () => void;
 }
 
 export interface TelegramAgentEndHookRuntimeDeps<
@@ -847,6 +862,13 @@ export interface TelegramAgentEndHookRuntimeDeps<
   getDefaultChatId?: TelegramAgentEndRuntimeDeps<TTurn>["getDefaultChatId"];
   isProactivePushEnabled?: TelegramAgentEndRuntimeDeps<TTurn>["isProactivePushEnabled"];
   recordRuntimeEvent?: TelegramAgentEndRuntimeDeps<TTurn>["recordRuntimeEvent"];
+  clearAsyncFollowupState?: TelegramAgentEndRuntimeDeps<TTurn>["clearAsyncFollowupState"];
+  hasCurrentAsyncFollowupTurn?: TelegramAgentEndRuntimeDeps<TTurn>["hasCurrentAsyncFollowupTurn"];
+  peekPendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["peekPendingAsyncFollowupTarget"];
+  consumePendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumePendingAsyncFollowupTarget"];
+  consumeCurrentAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumeCurrentAsyncFollowupTarget"];
+  clearCurrentAsyncFollowupTurn?: () => void;
+  resetTransportReplyDedup?: TelegramAgentEndRuntimeDeps<TTurn>["resetTransportReplyDedup"];
 }
 
 export interface TelegramAgentEndHookEvent<TMessage> {
@@ -938,10 +960,16 @@ export function createTelegramAgentEndHook<
   ): Promise<void> {
     const turn = deps.getActiveTurn();
     const proactiveEnabled = deps.isProactivePushEnabled?.() ?? false;
-    await handleTelegramAgentEndRuntime({
+    const asyncFollowupEnabled =
+      deps.hasCurrentAsyncFollowupTurn?.() ??
+      (deps.peekPendingAsyncFollowupTarget?.() !== undefined);
+    try {
+      await handleTelegramAgentEndRuntime({
       turn,
       assistant:
-        turn || proactiveEnabled ? deps.extractAssistant(event.messages) : {},
+        turn || proactiveEnabled || asyncFollowupEnabled
+          ? deps.extractAssistant(event.messages)
+          : {},
       preserveQueuedTurnsAsHistory: deps.getPreserveQueuedTurnsAsHistory(),
       resetRuntimeState: deps.resetRuntimeState,
       updateStatus: () => deps.updateStatus(ctx),
@@ -966,7 +994,16 @@ export function createTelegramAgentEndHook<
       getDefaultChatId: deps.getDefaultChatId,
       isProactivePushEnabled: deps.isProactivePushEnabled,
       recordRuntimeEvent: deps.recordRuntimeEvent,
+      clearAsyncFollowupState: deps.clearAsyncFollowupState,
+      hasCurrentAsyncFollowupTurn: deps.hasCurrentAsyncFollowupTurn,
+      peekPendingAsyncFollowupTarget: deps.peekPendingAsyncFollowupTarget,
+      consumePendingAsyncFollowupTarget: deps.consumePendingAsyncFollowupTarget,
+      consumeCurrentAsyncFollowupTarget: deps.consumeCurrentAsyncFollowupTarget,
+      resetTransportReplyDedup: deps.resetTransportReplyDedup,
     });
+    } finally {
+      deps.clearCurrentAsyncFollowupTurn?.();
+    }
   };
 }
 
@@ -986,6 +1023,7 @@ export async function handleTelegramAgentEndRuntime<
   deps.resetRuntimeState();
   deps.updateStatus();
   if (deps.isCurrentOwner && !deps.isCurrentOwner()) {
+    deps.clearAsyncFollowupState?.();
     if (turn) await deps.clearPreview(turn.chatId);
     return;
   }
@@ -997,7 +1035,42 @@ export async function handleTelegramAgentEndRuntime<
     preserveQueuedTurnsAsHistory: deps.preserveQueuedTurnsAsHistory,
   });
   if (!turn) {
-    if (
+    const shouldConsumeAsyncFollowup =
+      deps.hasCurrentAsyncFollowupTurn?.() ?? true;
+    const asyncFollowupTarget = shouldConsumeAsyncFollowup
+      ? deps.consumeCurrentAsyncFollowupTarget?.() ??
+        deps.consumePendingAsyncFollowupTarget?.()
+      : undefined;
+    if (asyncFollowupTarget) {
+      if (finalText) {
+        try {
+          deps.resetTransportReplyDedup?.();
+          await deps.sendMarkdownReply(
+            asyncFollowupTarget.chatId,
+            asyncFollowupTarget.replyToMessageId,
+            finalText,
+            { replyMarkup },
+          );
+        } catch (error) {
+          deps.recordRuntimeEvent?.("async-followup", error, {
+            chatId: asyncFollowupTarget.chatId,
+            replyToMessageId: asyncFollowupTarget.replyToMessageId,
+          });
+        }
+      } else {
+        deps.recordRuntimeEvent?.(
+          "async-followup",
+          new Error("Dropped pending async follow-up without sendable final text."),
+          {
+            chatId: asyncFollowupTarget.chatId,
+            replyToMessageId: asyncFollowupTarget.replyToMessageId,
+            hasFinalText: !!finalText,
+            hasReplyMarkup: !!replyMarkup,
+            hasErrorMessage: !!assistant.errorMessage,
+          },
+        );
+      }
+    } else if (
       deps.isProactivePushEnabled?.() &&
       finalText &&
       !assistant.errorMessage

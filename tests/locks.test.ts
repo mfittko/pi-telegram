@@ -245,7 +245,7 @@ test("Locked polling runtime suspends session replacement without releasing owne
   }
 });
 
-test("Locked polling runtime stops after ownership loss without live context", async () => {
+test("Locked polling runtime stops after ownership loss without waiting for async cleanup", async () => {
   const temp = createTempLockPath();
   try {
     const events: string[] = [];
@@ -255,6 +255,10 @@ test("Locked polling runtime stops after ownership loss without live context", a
       message: string;
     }[] = [];
     const ctx = { cwd: "/repo" };
+    let resolveCleanup: (() => void) | undefined;
+    const cleanupPromise = new Promise<void>((resolve) => {
+      resolveCleanup = resolve;
+    });
     const lock = createTelegramLockRuntime({ locksPath: temp.path, pid: 10 });
     const runtime = createTelegramLockedPollingRuntime({
       lock,
@@ -269,6 +273,11 @@ test("Locked polling runtime stops after ownership loss without live context", a
       updateStatus: () => {
         events.push("status");
       },
+      onOwnershipLoss: async () => {
+        events.push("ownership-loss:start");
+        await cleanupPromise;
+        events.push("ownership-loss:done");
+      },
       recordRuntimeEvent: (category, error, details) => {
         runtimeEvents.push({
           category,
@@ -280,7 +289,15 @@ test("Locked polling runtime stops after ownership loss without live context", a
     assert.equal((await runtime.start(ctx)).ok, true);
     writeFileSync(temp.path, JSON.stringify({}));
     await waitForCondition(() => events.includes("stop"));
-    assert.deepEqual(events, ["start", "status", "stop"]);
+    assert.deepEqual(events.slice(0, 2), ["start", "status"]);
+    assert.equal(events.includes("ownership-loss:start"), true);
+    assert.equal(events.includes("ownership-loss:done"), false);
+    assert.equal(events.includes("stop"), true);
+    resolveCleanup?.();
+    await waitForCondition(() => events.includes("ownership-loss:done"));
+    assert.deepEqual(events.slice(0, 2), ["start", "status"]);
+    assert.equal(events.at(-1), "ownership-loss:done");
+    assert.equal(events.includes("stop"), true);
     assert.deepEqual(runtimeEvents, []);
   } finally {
     rmSync(temp.dir, { recursive: true, force: true });
