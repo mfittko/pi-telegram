@@ -275,20 +275,23 @@ export function createTelegramLockedPollingRuntime<
   const stopAfterOwnershipLoss = () => {
     if (ownershipStop) return;
     stopOwnershipWatcher();
-    ownershipStop = Promise.resolve()
+    const cleanupPromise = Promise.resolve()
       .then(() => deps.onOwnershipLoss?.())
       .catch((error) =>
         deps.recordRuntimeEvent?.("lock", error, {
           phase: "ownership-loss-cleanup",
         }),
-      )
-      .then(() => deps.stopPolling())
+      );
+    const stopPromise = deps
+      .stopPolling()
       .catch((error) =>
         deps.recordRuntimeEvent?.("lock", error, { phase: "ownership-loss" }),
-      )
-      .finally(() => {
+      );
+    ownershipStop = Promise.allSettled([cleanupPromise, stopPromise]).finally(
+      () => {
         ownershipStop = undefined;
-      });
+      },
+    );
   };
   const startOwnershipWatcher = (ctx: TContext) => {
     const owner = snapshotLockContext(ctx);
