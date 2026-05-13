@@ -256,3 +256,58 @@ test("Async notify removes stale event listeners before rebinding", () => {
   assert.equal(unsubscribed, 3);
   assert.equal(listeners.size, 3);
 });
+
+test("Async notify keeps listeners for distinct event buses isolated", () => {
+  let firstBusUnsubscribed = 0;
+  let secondBusUnsubscribed = 0;
+  const firstBusListeners = new Map<string, (payload: unknown) => void>();
+  const secondBusListeners = new Map<string, (payload: unknown) => void>();
+  const firstBus = {
+    on(event: string, handler: (payload: unknown) => void) {
+      firstBusListeners.set(event, handler);
+      return () => {
+        firstBusUnsubscribed += 1;
+        firstBusListeners.delete(event);
+      };
+    },
+  };
+  const secondBus = {
+    on(event: string, handler: (payload: unknown) => void) {
+      secondBusListeners.set(event, handler);
+      return () => {
+        secondBusUnsubscribed += 1;
+        secondBusListeners.delete(event);
+      };
+    },
+  };
+
+  bindTelegramAsyncFollowupEvents(firstBus, {
+    handleStarted() {},
+    handleCompleted() {},
+    handleControl() {},
+    peekPendingFollowupTarget() {
+      return undefined;
+    },
+    consumePendingFollowupTarget() {
+      return undefined;
+    },
+    clear() {},
+  });
+  bindTelegramAsyncFollowupEvents(secondBus, {
+    handleStarted() {},
+    handleCompleted() {},
+    handleControl() {},
+    peekPendingFollowupTarget() {
+      return undefined;
+    },
+    consumePendingFollowupTarget() {
+      return undefined;
+    },
+    clear() {},
+  });
+
+  assert.equal(firstBusUnsubscribed, 0);
+  assert.equal(secondBusUnsubscribed, 0);
+  assert.equal(firstBusListeners.size, 3);
+  assert.equal(secondBusListeners.size, 3);
+});

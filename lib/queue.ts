@@ -1016,22 +1016,38 @@ export async function handleTelegramAgentEndRuntime<
     preserveQueuedTurnsAsHistory: deps.preserveQueuedTurnsAsHistory,
   });
   if (!turn) {
-    const asyncFollowupTarget = deps.peekPendingAsyncFollowupTarget?.();
-    if (asyncFollowupTarget && finalText && !assistant.errorMessage) {
-      try {
-        await deps.sendMarkdownReply(
-          asyncFollowupTarget.chatId,
-          asyncFollowupTarget.replyToMessageId,
-          finalText,
-          { replyMarkup },
+    const peekedAsyncFollowupTarget = deps.peekPendingAsyncFollowupTarget?.();
+    const asyncFollowupTarget = peekedAsyncFollowupTarget
+      ? deps.consumePendingAsyncFollowupTarget?.() ?? peekedAsyncFollowupTarget
+      : undefined;
+    if (asyncFollowupTarget) {
+      if (finalText && !assistant.errorMessage) {
+        try {
+          await deps.sendMarkdownReply(
+            asyncFollowupTarget.chatId,
+            asyncFollowupTarget.replyToMessageId,
+            finalText,
+            { replyMarkup },
+          );
+        } catch (error) {
+          deps.recordRuntimeEvent?.("async-followup", error, {
+            chatId: asyncFollowupTarget.chatId,
+            replyToMessageId: asyncFollowupTarget.replyToMessageId,
+          });
+        }
+      } else {
+        deps.recordRuntimeEvent?.(
+          "async-followup",
+          new Error("Dropped pending async follow-up without sendable final text."),
+          {
+            chatId: asyncFollowupTarget.chatId,
+            replyToMessageId: asyncFollowupTarget.replyToMessageId,
+            hasFinalText: !!finalText,
+            hasReplyMarkup: !!replyMarkup,
+            hasErrorMessage: !!assistant.errorMessage,
+          },
         );
-      } catch (error) {
-        deps.recordRuntimeEvent?.("async-followup", error, {
-          chatId: asyncFollowupTarget.chatId,
-          replyToMessageId: asyncFollowupTarget.replyToMessageId,
-        });
       }
-      deps.consumePendingAsyncFollowupTarget?.();
     } else if (
       deps.isProactivePushEnabled?.() &&
       finalText &&

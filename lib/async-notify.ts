@@ -11,6 +11,11 @@ const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 const GLOBAL_UNSUBSCRIBE_STORE_KEY = "__piTelegramAsyncFollowupUnsubscribes__";
 
+type TelegramAsyncFollowupUnsubscribeStore = WeakMap<
+  TelegramEventBusLike,
+  Array<() => void>
+>;
+
 type TelegramAsyncFollowupKind = "needs_attention" | "completion";
 
 export interface TelegramAsyncStartedEvent {
@@ -222,6 +227,17 @@ export function createTelegramAsyncFollowupSessionHooks<
   };
 }
 
+function getGlobalAsyncFollowupUnsubscribeStore(): TelegramAsyncFollowupUnsubscribeStore {
+  const globalStore = globalThis as Record<string, unknown>;
+  const existing = globalStore[GLOBAL_UNSUBSCRIBE_STORE_KEY];
+  if (existing instanceof WeakMap) {
+    return existing as TelegramAsyncFollowupUnsubscribeStore;
+  }
+  const nextStore: TelegramAsyncFollowupUnsubscribeStore = new WeakMap();
+  globalStore[GLOBAL_UNSUBSCRIBE_STORE_KEY] = nextStore;
+  return nextStore;
+}
+
 export function bindTelegramAsyncFollowupEvents(
   eventBus: TelegramEventBusLike,
   runtime: Pick<
@@ -229,11 +245,10 @@ export function bindTelegramAsyncFollowupEvents(
     "handleStarted" | "handleCompleted" | "handleControl"
   >,
 ): Array<() => void> {
-  const globalStore = globalThis as Record<string, unknown>;
-  const previousUnsubscribes = globalStore[GLOBAL_UNSUBSCRIBE_STORE_KEY];
-  if (Array.isArray(previousUnsubscribes)) {
+  const unsubscribeStore = getGlobalAsyncFollowupUnsubscribeStore();
+  const previousUnsubscribes = unsubscribeStore.get(eventBus);
+  if (previousUnsubscribes) {
     for (const unsubscribe of previousUnsubscribes) {
-      if (typeof unsubscribe !== "function") continue;
       try {
         unsubscribe();
       } catch {
@@ -252,6 +267,13 @@ export function bindTelegramAsyncFollowupEvents(
       runtime.handleControl(payload);
     }),
   ];
-  globalStore[GLOBAL_UNSUBSCRIBE_STORE_KEY] = unsubscribes;
-  return unsubscribes;
+  unsubscribeStore.set(eventBus, unsubscribes);
+  return unsubscribes.map((unsubscribe) => {
+    return () => {
+      unsubscribe();
+      if (unsubscribeStore.get(eventBus) === unsubscribes) {
+        unsubscribeStore.delete(eventBus);
+      }
+    };
+  });
 }

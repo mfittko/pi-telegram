@@ -950,6 +950,103 @@ Fix the actionable review findings.
   ]);
 });
 
+test("Agent end runtime clears dropped no-turn async mirror state with no sendable text", async () => {
+  const events: string[] = [];
+  let consumed = false;
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: {
+      text: `<!-- telegram_button label="Fix review findings"
+Fix the actionable review findings.
+-->`,
+    },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {
+      events.push("unexpected:markdown");
+    },
+    sendTextReply: async () => {
+      events.push("unexpected:text");
+    },
+    sendQueuedAttachments: async () => {},
+    planOutboundReply: () => ({
+      markdown: "",
+      replyMarkup: {
+        inline_keyboard: [[{ text: "Fix review findings", callback_data: "tgbtn:1" }]],
+      },
+    }),
+    peekPendingAsyncFollowupTarget: () =>
+      consumed ? undefined : { chatId: 7, replyToMessageId: 11 },
+    consumePendingAsyncFollowupTarget: () => {
+      if (consumed) return undefined;
+      consumed = true;
+      events.push("consume");
+      return { chatId: 7, replyToMessageId: 11 };
+    },
+    recordRuntimeEvent: (category, error, details) => {
+      events.push(
+        `${category}:${error instanceof Error ? error.message : String(error)}:${details?.hasReplyMarkup}:${details?.hasFinalText}`,
+      );
+    },
+  });
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    "consume",
+    "async-followup:Dropped pending async follow-up without sendable final text.:true:false",
+    "dispatch",
+  ]);
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: { text: "Later unrelated local output." },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset-2");
+    },
+    updateStatus: () => {
+      events.push("status-2");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch-2");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {
+      events.push("unexpected:markdown-2");
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    peekPendingAsyncFollowupTarget: () =>
+      consumed ? undefined : { chatId: 7, replyToMessageId: 11 },
+    consumePendingAsyncFollowupTarget: () => {
+      events.push("unexpected:consume-2");
+      return undefined;
+    },
+  });
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    "consume",
+    "async-followup:Dropped pending async follow-up without sendable final text.:true:false",
+    "dispatch",
+    "reset-2",
+    "status-2",
+    "dispatch-2",
+  ]);
+});
+
 test("Agent end runtime consumes pending no-turn async mirror only once", async () => {
   const events: string[] = [];
   let consumed = false;

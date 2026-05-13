@@ -88,6 +88,42 @@ test("Pi API runtime ports bind methods without losing receiver context", async 
   ]);
 });
 
+test("Pi API runtime ports provide a fallback event bus when the SDK omits events", () => {
+  const api: Parameters<typeof createExtensionApiRuntimePorts>[0] & {
+    log: string[];
+  } = {
+    log: [],
+    sendUserMessage(content) {
+      this.log.push(`send:${String(content)}`);
+    },
+    async exec(command, args) {
+      this.log.push(`exec:${command}:${args.join(",")}`);
+      return { stdout: "ok", stderr: "", code: 0, killed: false };
+    },
+    getCommands() {
+      this.log.push("commands");
+      return [];
+    },
+    getThinkingLevel() {
+      this.log.push("get-thinking");
+      return "high";
+    },
+    setThinkingLevel(level) {
+      this.log.push(`thinking:${String(level)}`);
+    },
+    async setModel(model) {
+      this.log.push(`model:${getHarnessModelId(model)}`);
+      return true;
+    },
+  };
+
+  const runtime = createExtensionApiRuntimePorts(api);
+  assert.equal(typeof runtime.events.on, "function");
+  assert.equal(typeof runtime.events.emit, "function");
+  assert.equal(typeof runtime.events.on("demo", () => {}), "function");
+  runtime.events.emit("demo", { ok: true });
+});
+
 test("Pi scoped model persister invalidates cached inputs without clearing live menus", async () => {
   const events: string[] = [];
   const persist = createScopedModelPatternPersister({
