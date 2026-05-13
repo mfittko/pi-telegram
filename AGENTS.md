@@ -102,7 +102,7 @@ The canonical detailed ownership map lives in [`docs/architecture.md`](./docs/ar
 
 - Scheduling and lifecycle: `queue`, `runtime`, `lifecycle`, `locks`
 - Telegram transport and inbound flow: `api`, `polling`, `updates`, `routing`, `media`, `turns`, `inbound-handlers`, `config`, `setup`
-- Response surfaces: `preview`, `replies`, `rendering`, `keyboard`, `outbound-attachments`, `outbound-handlers`, `status`
+- Response surfaces: `preview`, `replies`, `rendering`, `async-notify`, `keyboard`, `outbound-attachments`, `outbound-handlers`, `status`
 - Controls and application menu UI: `commands`, `menu`, `menu-model`, `menu-thinking`, `menu-status`, `menu-queue`, `model`, `prompts`
 - Extension platform: `extension-sections` owns section registry, token mapping, callback dispatch, context building, and globalThis bridge
 - Pi SDK boundary: `pi` owns direct pi imports and bound extension API ports

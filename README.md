@@ -76,6 +76,7 @@ What it feels like:
 - Fire off three tasks while π is busy. They become visible queue items instead of terminal noise.
 - Open Queue from the menu, inspect waiting work, delete stale prompts, or move important work forward.
 - Switch models from Telegram mid-run; the adapter schedules a safe continuation instead of tearing state apart.
+- Start an async review from Telegram, put the phone away, and get a concise completion/failure/needs-attention follow-up in the same chat.
 - Send a voice note; an inbound handler transcribes it; π answers in the same chat.
 - Drop a screenshot and ask, "what is broken here?" The image payload reaches π with the local file context.
 - Ask for a generated file; when π calls `telegram_attach`, the artifact returns to Telegram with the next reply.
@@ -211,9 +212,19 @@ Ordinary pi extensions can register structured UI sections that appear in the ma
 
 Import from `@llblab/pi-telegram`, call `registerTelegramSection()`, and return a disposer on shutdown. Sections can send interactive messages directly into the chat via `ctx.open()` — confirmation dialogs, approve/deny gates, and multi-step forms live outside the menu hierarchy while callbacks route through the same typed handler. See [`@llblab/pi-telegram-extension-demo`](https://github.com/llblab/pi-telegram-extension-demo) for a working reference and the [Extension Sections Standard](./docs/extension-sections.md) for the full contract.
 
+### Telegram-started async runs
+
+When a Telegram-originated turn launches an async `pi-subagents` run, the bridge now keeps that run attributed to the originating Telegram prompt and sends a concise follow-up notice back to the same chat when the async run:
+
+- completes
+- fails
+- needs attention
+
+This is separate from ambient proactive push: only attributable Telegram-started async runs are mirrored, and unrelated local/background runs stay silent.
+
 ### Proactive push
 
-`telegram.json` can set `proactivePush: true` to send successful local non-Telegram final replies to the paired Telegram chat when no Telegram turn is active. Local prompt text is not mirrored because the bot does not own terminal user messages. The mode is off by default and can be toggled from settings.
+`telegram.json` can set `proactivePush: true` to send successful local non-Telegram final replies to the paired Telegram chat when no Telegram turn is active. Local prompt text is not mirrored because the bot does not own terminal user messages. The mode is off by default and can be toggled from settings. Telegram-started async run notices are handled separately from this setting.
 
 ## Docs
 

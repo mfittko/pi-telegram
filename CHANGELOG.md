@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `[Async Notices]` Telegram-started async `pi-subagents` runs are now attributed to the originating Telegram prompt and send concise completion, failure, and `needs_attention` follow-up messages back to the same chat even after the original turn has ended.
+- `[Async Notices]` Added `lib/async-notify.ts` to own async-run attribution, pi-subagents event-bus listeners, duplicate-state suppression, and lock-owner-safe Telegram delivery.
+- `[Tests]` Added `tests/async-notify.test.ts` covering attributable async completion delivery, async needs-attention delivery, stale/session-clear suppression, and event-bus binding.
+- `[Docs]` Updated `README.md` and `docs/architecture.md` to describe Telegram-started async notices separately from ambient proactive push.
+
 ## 0.10.2: Delete Message Port Hotfix
 
 - `[ctx.deleteMessage()]` Added `deleteMessage()` to `TelegramSectionContext` and `TelegramSectionCallbackContext`. Extensions can now delete the message that triggered a callback — useful for cleaning up confirmation dialogs after the user makes a choice.

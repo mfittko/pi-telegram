@@ -5,6 +5,7 @@
  */
 
 import * as Api from "./lib/api.ts";
+import * as AsyncNotify from "./lib/async-notify.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
 import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
@@ -46,6 +47,7 @@ type RuntimeTelegramQueueItem = Queue.TelegramQueueItem<Pi.ExtensionContext>;
 export default function (pi: Pi.ExtensionAPI) {
   const piRuntime = Pi.createExtensionApiRuntimePorts(pi);
   const {
+    events,
     getCommands,
     getThinkingLevel,
     sendUserMessage,
@@ -198,6 +200,13 @@ export default function (pi: Pi.ExtensionAPI) {
       sendMarkdownReply: replyRuntime.sendMarkdownReply,
       execCommand: CommandTemplates.execCommandTemplate,
       getHandlers: configStore.getOutboundHandlers,
+      recordRuntimeEvent,
+    });
+  const asyncNotificationRuntime =
+    AsyncNotify.createTelegramAsyncNotificationRuntime({
+      getActiveTurn: activeTurnRuntime.get,
+      isCurrentOwner: lockOwnershipGuard.ownsCurrentProcess,
+      sendTextReply,
       recordRuntimeEvent,
     });
   const dispatchNextQueuedTelegramTurn =
@@ -427,12 +436,23 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: lockedPollingRuntime.suspend,
     recordRuntimeEvent,
   });
+  const asyncNotificationSessionHooks =
+    AsyncNotify.createTelegramAsyncNotificationSessionHooks({
+      clear: asyncNotificationRuntime.clear,
+    });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
-    queueSessionLifecycle,
-    { onSessionStart: lockedPollingRuntime.onSessionStart },
+    Lifecycle.prependTelegramLifecycleHooks(
+      asyncNotificationSessionHooks,
+      queueSessionLifecycle,
+    ),
+    {
+      onSessionStart: lockedPollingRuntime.onSessionStart,
+    },
   );
 
   // --- Extension API Bindings ---
+
+  AsyncNotify.bindTelegramAsyncNotificationEvents(events, asyncNotificationRuntime);
 
   OutboundAttachments.registerTelegramOutboundAttachmentTool(pi, {
     getActiveTurn: activeTurnRuntime.get,

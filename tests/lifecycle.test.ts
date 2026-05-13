@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   appendTelegramLifecycleHooks,
+  prependTelegramLifecycleHooks,
   registerTelegramLifecycleHooks,
 } from "../lib/lifecycle.ts";
 import type { ExtensionAPI, ExtensionContext } from "../lib/pi.ts";
@@ -40,7 +41,37 @@ function createLifecycleContext(): ExtensionContext {
   return {} as ExtensionContext;
 }
 
-test("Lifecycle helpers compose session hooks in order", async () => {
+test("Lifecycle helpers prepend session hooks in order", async () => {
+  const events: string[] = [];
+  const hooks = prependTelegramLifecycleHooks(
+    {
+      onSessionStart: async () => {
+        events.push("extra-start");
+      },
+      onSessionShutdown: async () => {
+        events.push("extra-shutdown");
+      },
+    },
+    {
+      onSessionStart: async () => {
+        events.push("base-start");
+      },
+      onSessionShutdown: async () => {
+        events.push("base-shutdown");
+      },
+    },
+  );
+  await hooks.onSessionStart({} as never, createLifecycleContext());
+  await hooks.onSessionShutdown({} as never, createLifecycleContext());
+  assert.deepEqual(events, [
+    "extra-start",
+    "base-start",
+    "extra-shutdown",
+    "base-shutdown",
+  ]);
+});
+
+test("Lifecycle helpers append session hooks in order", async () => {
   const events: string[] = [];
   const hooks = appendTelegramLifecycleHooks(
     {

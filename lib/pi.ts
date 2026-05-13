@@ -45,6 +45,7 @@ export interface PiExtensionApiRuntimePorts {
   getThinkingLevel: ExtensionAPI["getThinkingLevel"];
   setThinkingLevel: ExtensionAPI["setThinkingLevel"];
   setModel: ExtensionAPI["setModel"];
+  events: ExtensionAPI["events"];
 }
 
 export function createExtensionApiRuntimePorts(
@@ -56,6 +57,7 @@ export function createExtensionApiRuntimePorts(
     | "getThinkingLevel"
     | "setThinkingLevel"
     | "setModel"
+    | "events"
   >,
 ): PiExtensionApiRuntimePorts {
   return {
@@ -65,6 +67,7 @@ export function createExtensionApiRuntimePorts(
     getThinkingLevel: () => api.getThinkingLevel(),
     setThinkingLevel: (level) => api.setThinkingLevel(level),
     setModel: (model) => api.setModel(model),
+    events: api.events,
   };
 }
 

@@ -113,6 +113,22 @@ export interface TelegramExtraLifecycleHooks {
   ) => Promise<void>;
 }
 
+export function prependTelegramLifecycleHooks(
+  extra: TelegramExtraLifecycleHooks,
+  base: TelegramSessionLifecycleHooks,
+): TelegramSessionLifecycleHooks {
+  return {
+    onSessionStart: async (event, ctx) => {
+      await extra.onSessionStart?.(event, ctx);
+      await base.onSessionStart(event, ctx);
+    },
+    onSessionShutdown: async (event, ctx) => {
+      await extra.onSessionShutdown?.(event, ctx);
+      await base.onSessionShutdown(event, ctx);
+    },
+  };
+}
+
 export function appendTelegramLifecycleHooks(
   base: TelegramSessionLifecycleHooks,
   extra: TelegramExtraLifecycleHooks,
