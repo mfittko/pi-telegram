@@ -214,10 +214,11 @@ Import from `@llblab/pi-telegram`, call `registerTelegramSection()`, and return 
 
 ### Telegram-started async runs
 
-When a Telegram-originated turn launches an async `pi-subagents` run, the bridge now keeps that run attributed to the originating Telegram prompt and sends a concise follow-up notice back to the same chat when the async run:
+When a Telegram-originated turn launches an async `pi-subagents` run, the bridge keeps that run attributed to the originating Telegram prompt and sends a concise follow-up notice back to the same chat when the async run:
 
 - completes
 - fails
+- pauses
 - needs attention
 
 This is separate from ambient proactive push: only attributable Telegram-started async runs are mirrored, and unrelated local/background runs stay silent.

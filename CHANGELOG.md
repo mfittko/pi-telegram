@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.10.3: Async Run Notifications
 
-- `[Async Notices]` Telegram-started async `pi-subagents` runs are now attributed to the originating Telegram prompt and send concise completion, failure, and `needs_attention` follow-up messages back to the same chat even after the original turn has ended.
+- `[Async Notices]` Telegram-started async `pi-subagents` runs are now attributed to the originating Telegram prompt and send concise completion, failure, pause, and `needs_attention` follow-up messages back to the same chat even after the original turn has ended.
 - `[Async Notices]` Added `lib/async-notify.ts` to own async-run attribution, pi-subagents event-bus listeners, duplicate-state suppression, and lock-owner-safe Telegram delivery.
-- `[Tests]` Added `tests/async-notify.test.ts` covering attributable async completion delivery, async needs-attention delivery, stale/session-clear suppression, and event-bus binding.
-- `[Docs]` Updated `README.md` and `docs/architecture.md` to describe Telegram-started async notices separately from ambient proactive push.
+- `[Lifecycle]` Added `prependTelegramLifecycleHooks()` so async-notification state can be cleared before queue and polling session start/shutdown work runs.
+- `[Pi Runtime Ports]` Exposed the π event bus through `lib/pi.ts` runtime ports so the Telegram bridge can subscribe to async subagent lifecycle events without importing the SDK outside the pi adapter.
+- `[Package]` Bumped package metadata to `0.10.3` and kept the lockfile in sync.
+- `[Tests]` Added `tests/async-notify.test.ts` covering attributable async completion delivery, async needs-attention delivery, stale/session-clear suppression, event-bus binding, and lifecycle ordering.
+- `[Docs]` Updated `README.md`, `AGENTS.md`, and `docs/architecture.md` to describe Telegram-started async notices separately from ambient proactive push.
 
 ## 0.10.2: Delete Message Port Hotfix
 
