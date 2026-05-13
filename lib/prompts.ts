@@ -62,6 +62,10 @@ export interface TelegramProactivePromptHookDeps<TContext> {
   baseHook?: (event: BeforeAgentStartEvent) => { systemPrompt: string };
   isProactivePushEnabled: () => boolean;
   isCurrentOwner: (ctx: TContext) => boolean;
+  /** Optional callback to register attribution for the current run when it is Telegram-originated */
+  onAttributedRunStart?: (chatId: number) => void;
+  /** Optional getter for the default (paired) chat ID used for attribution */
+  getDefaultChatId?: () => number | undefined;
 }
 
 export function createTelegramProactiveBeforeAgentStartHook<TContext>(
@@ -71,10 +75,20 @@ export function createTelegramProactiveBeforeAgentStartHook<TContext>(
   ctx: TContext,
 ) => Promise<{ systemPrompt: string }> {
   const baseHook = deps.baseHook ?? createTelegramBeforeAgentStartHook();
+  const telegramPrefix = TELEGRAM_PREFIX;
   return async function onBeforeAgentStart(event, ctx) {
     const result = baseHook(event);
     if (!deps.isProactivePushEnabled()) return result;
     if (!deps.isCurrentOwner(ctx)) return result;
+    if (
+      deps.onAttributedRunStart &&
+      event.prompt.trimStart().startsWith(telegramPrefix)
+    ) {
+      const chatId = deps.getDefaultChatId?.();
+      if (chatId !== undefined) {
+        deps.onAttributedRunStart(chatId);
+      }
+    }
     return result;
   };
 }

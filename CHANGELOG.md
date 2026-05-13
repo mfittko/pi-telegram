@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.3: Async Run Notifications
+
+- `[Async Notifications]` Added proactive Telegram notifications for Pi runs attributed to the Telegram session that complete without an active Telegram turn. When `proactivePush` is enabled, the bridge now sends a concise text notification for failure (`stopReason: "error"`) and needs-attention (`stopReason: "length"`) states on top of the existing success proactive push.
+- `[Attribution]` Added `lib/async-notifications.ts` with a session-bound attribution store (`createTelegramAsyncRunAttributionStore`) and notification handler (`createTelegramAsyncRunNotificationHandler`). Attribution is recorded in the `before_agent_start` hook when the prompt is prefixed with `[telegram]`, the bridge is the current lock owner, and the paired chat is available. Cleared on `agent_end` and reset on session shutdown.
+- `[Deduplication]` Run-token-based deduplication prevents duplicate notifications for the same run, even if `agent_end` fires more than once. Deduplication state is reset on each session lifecycle cycle.
+- `[Delivery]` Delivery failures are recorded in the bridge diagnostics ring under `async-notification` without breaking normal queue or turn behavior.
+- `[Queue]` Extended `TelegramAgentEndRuntimeDeps` and `TelegramAgentEndHookRuntimeDeps` with optional `notifyAsyncRunCompletion` and `clearAsyncRunAttribution` deps. The `notifyAsyncRunCompletion` handler is called after the existing proactive push in the no-turn path. `clearAsyncRunAttribution` is called unconditionally after every `agent_end` via the hook wrapper.
+- `[Prompts]` Extended `TelegramProactivePromptHookDeps` with optional `onAttributedRunStart` and `getDefaultChatId` deps for attribution registration in `createTelegramProactiveBeforeAgentStartHook`.
+- `[Session Lifecycle]` Added `createTelegramAsyncRunSessionLifecycleHooks` to reset attribution and dedup state on session start and shutdown.
+- `[Tests]` Added 22 regression tests in `tests/async-notifications.test.ts` covering attribution store, stop-reason mapping, notification delivery, deduplication, session lifecycle hooks, prompt attribution hooks, and integration with `handleTelegramAgentEndRuntime`.
+- `[Docs]` Updated `README.md` proactive push section and `docs/architecture.md` with async notification semantics, attribution model, limits, and domain ownership.
+
 ## 0.10.2: Delete Message Port Hotfix
 
 - `[ctx.deleteMessage()]` Added `deleteMessage()` to `TelegramSectionContext` and `TelegramSectionCallbackContext`. Extensions can now delete the message that triggered a callback — useful for cleaning up confirmation dialogs after the user makes a choice.

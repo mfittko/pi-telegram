@@ -215,6 +215,13 @@ Import from `@llblab/pi-telegram`, call `registerTelegramSection()`, and return 
 
 `telegram.json` can set `proactivePush: true` to send successful local non-Telegram final replies to the paired Telegram chat when no Telegram turn is active. Local prompt text is not mirrored because the bot does not own terminal user messages. The mode is off by default and can be toggled from settings.
 
+When proactive push is enabled, the bridge also sends concise async notifications for Pi runs attributed to the Telegram session that complete without an active turn:
+
+- **Failure** (`⚠️ Background Pi run failed.`): when the attributed run ends with `stopReason: "error"`.
+- **Needs attention** (`⏸ Background Pi run needs attention — context limit reached.`): when the attributed run ends with `stopReason: "length"`.
+
+A run is attributed to the Telegram session when its prompt is prefixed with `[telegram]` at `before_agent_start` time, the bridge is the current lock owner, and the default paired chat is available. Attribution is session-bound: it is cleared on each `agent_end` and reset on session shutdown. Deduplication prevents duplicate notifications for the same run. Delivery failures are recorded in the bridge diagnostics ring under `async-notification`. Runs without valid Telegram-origin attribution remain silent.
+
 ## Docs
 
 - [Project Context](./AGENTS.md): durable engineering conventions and architecture constraints.

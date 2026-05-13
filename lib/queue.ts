@@ -805,6 +805,12 @@ export interface TelegramAgentEndRuntimeDeps<
     error: unknown,
     details?: Record<string, unknown>,
   ) => void;
+  /**
+   * Optional hook called in the no-turn path to deliver async run notifications
+   * for failure and needs-attention states when the run is Telegram-attributed.
+   * Deduplication and attribution checks are owned by the implementation.
+   */
+  notifyAsyncRunCompletion?: (stopReason: string | undefined) => Promise<void>;
 }
 
 export interface TelegramAgentEndHookRuntimeDeps<
@@ -847,6 +853,9 @@ export interface TelegramAgentEndHookRuntimeDeps<
   getDefaultChatId?: TelegramAgentEndRuntimeDeps<TTurn>["getDefaultChatId"];
   isProactivePushEnabled?: TelegramAgentEndRuntimeDeps<TTurn>["isProactivePushEnabled"];
   recordRuntimeEvent?: TelegramAgentEndRuntimeDeps<TTurn>["recordRuntimeEvent"];
+  notifyAsyncRunCompletion?: TelegramAgentEndRuntimeDeps<TTurn>["notifyAsyncRunCompletion"];
+  /** Called after every agent_end to clear async run attribution regardless of path */
+  clearAsyncRunAttribution?: () => void;
 }
 
 export interface TelegramAgentEndHookEvent<TMessage> {
@@ -938,10 +947,13 @@ export function createTelegramAgentEndHook<
   ): Promise<void> {
     const turn = deps.getActiveTurn();
     const proactiveEnabled = deps.isProactivePushEnabled?.() ?? false;
+    const asyncNotificationsEnabled = !!deps.notifyAsyncRunCompletion;
     await handleTelegramAgentEndRuntime({
       turn,
       assistant:
-        turn || proactiveEnabled ? deps.extractAssistant(event.messages) : {},
+        turn || proactiveEnabled || asyncNotificationsEnabled
+          ? deps.extractAssistant(event.messages)
+          : {},
       preserveQueuedTurnsAsHistory: deps.getPreserveQueuedTurnsAsHistory(),
       resetRuntimeState: deps.resetRuntimeState,
       updateStatus: () => deps.updateStatus(ctx),
@@ -966,7 +978,9 @@ export function createTelegramAgentEndHook<
       getDefaultChatId: deps.getDefaultChatId,
       isProactivePushEnabled: deps.isProactivePushEnabled,
       recordRuntimeEvent: deps.recordRuntimeEvent,
+      notifyAsyncRunCompletion: deps.notifyAsyncRunCompletion,
     });
+    deps.clearAsyncRunAttribution?.();
   };
 }
 
@@ -1013,6 +1027,7 @@ export async function handleTelegramAgentEndRuntime<
         }
       }
     }
+    await deps.notifyAsyncRunCompletion?.(assistant.stopReason);
     if (endPlan.shouldDispatchNext) deps.dispatchNextQueuedTelegramTurn();
     return;
   }

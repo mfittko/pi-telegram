@@ -5,6 +5,7 @@
  */
 
 import * as Api from "./lib/api.ts";
+import * as AsyncNotifications from "./lib/async-notifications.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
 import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
@@ -68,6 +69,12 @@ export default function (pi: Pi.ExtensionAPI) {
       getActiveTurnChatId: activeTurnRuntime.getChatId,
       getAllowedUserId: configStore.getAllowedUserId,
     });
+  const asyncRunAttributionStore =
+    AsyncNotifications.createTelegramAsyncRunAttributionStore();
+  const asyncRunSessionHooks =
+    AsyncNotifications.createTelegramAsyncRunSessionLifecycleHooks(
+      asyncRunAttributionStore,
+    );
   const buttonActionStore = OutboundHandlers.createTelegramButtonActionStore();
   const pendingModelSwitchStore =
     Model.createPendingModelSwitchStore<
@@ -235,6 +242,15 @@ export default function (pi: Pi.ExtensionAPI) {
       finalizeMarkdownPreview: previewRuntime.finalizeMarkdown,
       execCommand: CommandTemplates.execCommandTemplate,
       getHandlers: configStore.getOutboundHandlers,
+      recordRuntimeEvent,
+    });
+  const handleAsyncRunCompletion =
+    AsyncNotifications.createTelegramAsyncRunNotificationHandler({
+      getAttribution: asyncRunAttributionStore.getAttribution,
+      hasNotified: asyncRunAttributionStore.hasNotified,
+      markNotified: asyncRunAttributionStore.markNotified,
+      isProactivePushEnabled,
+      sendMarkdownReply,
       recordRuntimeEvent,
     });
 
@@ -429,7 +445,10 @@ export default function (pi: Pi.ExtensionAPI) {
   });
   const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
     queueSessionLifecycle,
-    { onSessionStart: lockedPollingRuntime.onSessionStart },
+    {
+      onSessionStart: lockedPollingRuntime.onSessionStart,
+      onSessionShutdown: asyncRunSessionHooks.onSessionShutdown,
+    },
   );
 
   // --- Extension API Bindings ---
@@ -524,6 +543,8 @@ export default function (pi: Pi.ExtensionAPI) {
     getDefaultChatId: proactivePushChatIdGetter,
     isProactivePushEnabled,
     recordRuntimeEvent,
+    notifyAsyncRunCompletion: handleAsyncRunCompletion,
+    clearAsyncRunAttribution: asyncRunAttributionStore.clearAttribution,
     getActiveToolExecutions: lifecycle.getActiveToolExecutions,
     setActiveToolExecutions: lifecycle.setActiveToolExecutions,
     triggerPendingModelSwitchAbort: modelSwitchController.triggerPendingAbort,
@@ -540,6 +561,8 @@ export default function (pi: Pi.ExtensionAPI) {
     onBeforeAgentStart: Prompts.createTelegramProactiveBeforeAgentStartHook({
       isProactivePushEnabled,
       isCurrentOwner: lockOwnershipGuard.ownsContext,
+      onAttributedRunStart: asyncRunAttributionStore.beginRun,
+      getDefaultChatId: proactivePushChatIdGetter,
     }),
     onModelSelect: currentModelRuntime.onModelSelect,
     onMessageStart: previewRuntime.onMessageStart,
