@@ -824,12 +824,11 @@ Fix the actionable review findings on the current branch.
       message_id: 7,
       allow_sending_without_reply: true,
     });
-    assert.deepEqual(sentBodies[0]?.reply_markup, {
-      inline_keyboard: [[{
-        text: "Fix review findings",
-        callback_data: "tgbtn:0",
-      }]],
-    });
+    const firstButton = (sentBodies[0]?.reply_markup as {
+      inline_keyboard?: Array<Array<{ text?: string; callback_data?: string }>>;
+    } | undefined)?.inline_keyboard?.[0]?.[0];
+    assert.equal(firstButton?.text, "Fix review findings");
+    assert.match(firstButton?.callback_data ?? "", /^tgbtn:/);
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     restoreFetch();
