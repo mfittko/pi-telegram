@@ -132,6 +132,12 @@ test("Async notification handler sends failure notification for attributed run",
   await handler("error");
   const failureText = buildTelegramAsyncRunNotificationText("failure");
   assert.deepEqual(events, [`reply:9:undefined:${failureText}`]);
+  // Deduplication state should be marked after delivery
+  const attribution = store.getAttribution();
+  assert.ok(
+    attribution && store.hasNotified(attribution.runToken),
+    "markNotified should have been called after delivery",
+  );
 });
 
 test("Async notification handler sends needs_attention notification for attributed run", async () => {
@@ -151,6 +157,12 @@ test("Async notification handler sends needs_attention notification for attribut
   const needsAttentionText =
     buildTelegramAsyncRunNotificationText("needs_attention");
   assert.deepEqual(events, [`reply:9:undefined:${needsAttentionText}`]);
+  // Deduplication state should be marked after delivery
+  const attribution = store.getAttribution();
+  assert.ok(
+    attribution && store.hasNotified(attribution.runToken),
+    "markNotified should have been called after delivery",
+  );
 });
 
 test("Async notification handler stays silent for success and aborted stop reasons", async () => {
