@@ -867,7 +867,7 @@ export interface TelegramAgentEndHookRuntimeDeps<
   peekPendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["peekPendingAsyncFollowupTarget"];
   consumePendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumePendingAsyncFollowupTarget"];
   consumeCurrentAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumeCurrentAsyncFollowupTarget"];
-  clearCurrentAsyncFollowupTurn?: TelegramAgentEndRuntimeDeps<TTurn>["clearCurrentAsyncFollowupTurn"];
+  clearCurrentAsyncFollowupTurn?: () => void;
   resetTransportReplyDedup?: TelegramAgentEndRuntimeDeps<TTurn>["resetTransportReplyDedup"];
 }
 
