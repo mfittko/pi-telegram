@@ -1016,10 +1016,7 @@ export async function handleTelegramAgentEndRuntime<
     preserveQueuedTurnsAsHistory: deps.preserveQueuedTurnsAsHistory,
   });
   if (!turn) {
-    const peekedAsyncFollowupTarget = deps.peekPendingAsyncFollowupTarget?.();
-    const asyncFollowupTarget = peekedAsyncFollowupTarget
-      ? deps.consumePendingAsyncFollowupTarget?.() ?? peekedAsyncFollowupTarget
-      : undefined;
+    const asyncFollowupTarget = deps.consumePendingAsyncFollowupTarget?.();
     if (asyncFollowupTarget) {
       if (finalText && !assistant.errorMessage) {
         try {

@@ -1043,11 +1043,12 @@ Fix the actionable review findings.
     "dispatch",
     "reset-2",
     "status-2",
+    "unexpected:consume-2",
     "dispatch-2",
   ]);
 });
 
-test("Agent end runtime consumes pending no-turn async mirror only once", async () => {
+test("Agent end runtime uses consume as the sole no-turn async mirror source of truth", async () => {
   const events: string[] = [];
   let consumed = false;
   const deps = {
@@ -1071,8 +1072,7 @@ test("Agent end runtime consumes pending no-turn async mirror only once", async 
     },
     sendTextReply: async () => {},
     sendQueuedAttachments: async () => {},
-    peekPendingAsyncFollowupTarget: () =>
-      consumed ? undefined : { chatId: 7, replyToMessageId: 11 },
+    peekPendingAsyncFollowupTarget: () => ({ chatId: 7, replyToMessageId: 11 }),
     consumePendingAsyncFollowupTarget: () => {
       if (consumed) return undefined;
       consumed = true;
