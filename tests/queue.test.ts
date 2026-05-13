@@ -1139,6 +1139,81 @@ test("Agent end runtime uses consume as the sole no-turn async mirror source of 
   ]);
 });
 
+test("Agent end runtime does not consume a pending async follow-up during an unrelated no-turn agent end", async () => {
+  const events: string[] = [];
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: {},
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    hasCurrentAsyncFollowupTurn: () => false,
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {
+      events.push("unexpected:markdown");
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    peekPendingAsyncFollowupTarget: () => ({ chatId: 7, replyToMessageId: 11 }),
+    consumeCurrentAsyncFollowupTarget: () => {
+      events.push("unexpected:consume-current");
+      return undefined;
+    },
+    consumePendingAsyncFollowupTarget: () => {
+      events.push("unexpected:consume-pending");
+      return undefined;
+    },
+  });
+  assert.deepEqual(events, ["reset", "status", "dispatch"]);
+});
+
+test("Agent end runtime resets transport reply dedup before mirroring a no-turn async follow-up", async () => {
+  const events: string[] = [];
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: { text: "Async review finished." },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {
+      events.push("markdown");
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    hasCurrentAsyncFollowupTurn: () => true,
+    consumeCurrentAsyncFollowupTarget: () => ({ chatId: 7, replyToMessageId: 11 }),
+    resetTransportReplyDedup: () => {
+      events.push("reset-reply-dedup");
+    },
+  });
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    "reset-reply-dedup",
+    "markdown",
+    "dispatch",
+  ]);
+});
+
 test("Agent end runtime clears pending no-turn async mirror state after owner loss", async () => {
   const events: string[] = [];
   let cleared = 0;

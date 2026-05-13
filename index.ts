@@ -541,10 +541,16 @@ export default function (pi: Pi.ExtensionAPI) {
     isProactivePushEnabled,
     recordRuntimeEvent,
     clearAsyncFollowupState: asyncFollowupRuntime.clear,
+    hasCurrentAsyncFollowupTurn:
+      asyncFollowupRuntime.hasCurrentTurnFollowupTarget,
     peekPendingAsyncFollowupTarget:
       asyncFollowupRuntime.peekPendingFollowupTarget,
     consumePendingAsyncFollowupTarget:
       asyncFollowupRuntime.consumePendingFollowupTarget,
+    consumeCurrentAsyncFollowupTarget:
+      asyncFollowupRuntime.consumeCurrentTurnFollowupTarget,
+    clearCurrentAsyncFollowupTurn: asyncFollowupRuntime.clearCurrentTurn,
+    resetTransportReplyDedup: Replies.resetTransportReplyDedup,
     getActiveToolExecutions: lifecycle.getActiveToolExecutions,
     setActiveToolExecutions: lifecycle.setActiveToolExecutions,
     triggerPendingModelSwitchAbort: modelSwitchController.triggerPendingAbort,
@@ -563,7 +569,10 @@ export default function (pi: Pi.ExtensionAPI) {
       isCurrentOwner: lockOwnershipGuard.ownsContext,
     }),
     onModelSelect: currentModelRuntime.onModelSelect,
-    onMessageStart: previewRuntime.onMessageStart,
+    onMessageStart: async (event, ctx) => {
+      asyncFollowupRuntime.handleMessageStart(event.message);
+      await previewRuntime.onMessageStart(event, ctx);
+    },
     onMessageUpdate: previewRuntime.onMessageUpdate,
   });
 }

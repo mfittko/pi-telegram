@@ -805,6 +805,29 @@ test("Extension runtime mirrors exact parent no-turn async follow-up back to Tel
         messages: [
           {
             role: "assistant",
+            content: [{ type: "text", text: "Unrelated local output." }],
+          },
+        ],
+      },
+      ctx,
+    );
+    await handlers.get("message_start")?.(
+      {
+        message: {
+          role: "custom",
+          customType: "subagent-notify",
+          content: "Background task completed: **worker**",
+          display: true,
+          timestamp: Date.now(),
+        },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "assistant",
             content: [{
               type: "text",
               text: `Async review finished.

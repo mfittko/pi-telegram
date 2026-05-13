@@ -67,6 +67,50 @@ test("Async notify queues pending needs-attention follow-ups for attributed runs
   });
 });
 
+test("Async notify only binds a pending follow-up to the current turn after the matching subagent custom message starts", () => {
+  const runtime = createTelegramAsyncFollowupRuntime({
+    getActiveTurn: () => createAsyncNotifyTurn(),
+    isCurrentOwner: () => true,
+  });
+  runtime.handleStarted({ id: "run-1" });
+  runtime.handleCompleted({ id: "run-1" });
+
+  runtime.handleMessageStart({ role: "user", content: [{ type: "text", text: "unrelated" }] });
+  assert.equal(runtime.hasCurrentTurnFollowupTarget(), false);
+
+  runtime.handleMessageStart({
+    role: "custom",
+    customType: "subagent-notify",
+    content: "Background task completed",
+  });
+  assert.equal(runtime.hasCurrentTurnFollowupTarget(), true);
+  assert.deepEqual(runtime.consumeCurrentTurnFollowupTarget(), {
+    chatId: 7,
+    replyToMessageId: 11,
+  });
+  assert.equal(runtime.peekPendingFollowupTarget(), undefined);
+});
+
+
+test("Async notify ignores unrelated custom messages while a pending follow-up waits", () => {
+  const runtime = createTelegramAsyncFollowupRuntime({
+    getActiveTurn: () => createAsyncNotifyTurn(),
+    isCurrentOwner: () => true,
+  });
+  runtime.handleStarted({ id: "run-1" });
+  runtime.handleCompleted({ id: "run-1" });
+  runtime.handleMessageStart({
+    role: "custom",
+    customType: "other-extension-message",
+    content: "hello",
+  });
+  assert.equal(runtime.hasCurrentTurnFollowupTarget(), false);
+  assert.deepEqual(runtime.peekPendingFollowupTarget(), {
+    chatId: 7,
+    replyToMessageId: 11,
+  });
+});
+
 test("Async notify ignores runs that were not started from an active Telegram turn", () => {
   const runtime = createTelegramAsyncFollowupRuntime({
     getActiveTurn: () => undefined,

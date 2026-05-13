@@ -9,6 +9,8 @@ import type { PendingTelegramTurn } from "./queue.ts";
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+const SUBAGENT_NOTIFY_CUSTOM_TYPE = "subagent-notify";
+const SUBAGENT_CONTROL_NOTICE_CUSTOM_TYPE = "subagent_control_notice";
 const GLOBAL_UNSUBSCRIBE_STORE_KEY = "__piTelegramAsyncFollowupUnsubscribes__";
 
 type TelegramAsyncFollowupUnsubscribeStore = WeakMap<
@@ -58,8 +60,12 @@ export interface TelegramAsyncFollowupRuntime {
   handleStarted: (payload: unknown) => void;
   handleCompleted: (payload: unknown) => void;
   handleControl: (payload: unknown) => void;
+  handleMessageStart: (message: unknown) => void;
+  hasCurrentTurnFollowupTarget: () => boolean;
+  clearCurrentTurn: () => void;
   peekPendingFollowupTarget: () => TelegramAsyncFollowupTarget | undefined;
   consumePendingFollowupTarget: () => TelegramAsyncFollowupTarget | undefined;
+  consumeCurrentTurnFollowupTarget: () => TelegramAsyncFollowupTarget | undefined;
 }
 
 export interface TelegramAsyncFollowupSessionHooks<
@@ -123,12 +129,28 @@ function deletePendingEntry(
   if (index >= 0) pending.splice(index, 1);
 }
 
+function getAsyncFollowupMessageType(message: unknown): string | undefined {
+  if (typeof message !== "object" || message === null) return undefined;
+  if (Reflect.get(message, "role") !== "custom") return undefined;
+  const customType = Reflect.get(message, "customType");
+  return isNonEmptyString(customType) ? customType.trim() : undefined;
+}
+
+function isAsyncFollowupTurnMessage(message: unknown): boolean {
+  const customType = getAsyncFollowupMessageType(message);
+  return (
+    customType === SUBAGENT_NOTIFY_CUSTOM_TYPE ||
+    customType === SUBAGENT_CONTROL_NOTICE_CUSTOM_TYPE
+  );
+}
+
 export function createTelegramAsyncFollowupRuntime(
   deps: TelegramAsyncFollowupRuntimeDeps,
 ): TelegramAsyncFollowupRuntime {
   const attributedRuns = new Map<string, TelegramAsyncAttributedRun>();
   const pendingFollowups: TelegramPendingAsyncFollowup[] = [];
   const deliveredStates = new Map<string, Set<TelegramAsyncFollowupKind>>();
+  let currentTurnRunId: string | undefined;
 
   function hasDeliveredKind(
     runId: string,
@@ -156,11 +178,52 @@ export function createTelegramAsyncFollowupRuntime(
     pendingFollowups.push({ runId, kind });
   }
 
+  function getPendingEntry(runId: string | undefined): TelegramPendingAsyncFollowup | undefined {
+    if (!runId) return undefined;
+    return pendingFollowups.find((entry) => entry.runId === runId);
+  }
+
+  function getPendingTarget(runId: string | undefined): TelegramAsyncFollowupTarget | undefined {
+    const pending = getPendingEntry(runId);
+    if (!pending) return undefined;
+    const attribution = attributedRuns.get(pending.runId);
+    if (!attribution) return undefined;
+    return {
+      chatId: attribution.chatId,
+      replyToMessageId: attribution.replyToMessageId,
+    };
+  }
+
+  function getNextPendingRunId(): string | undefined {
+    for (const next of pendingFollowups) {
+      if (attributedRuns.has(next.runId)) return next.runId;
+    }
+    return undefined;
+  }
+
+  function consumeRunId(runId: string | undefined): TelegramAsyncFollowupTarget | undefined {
+    const pending = getPendingEntry(runId);
+    if (!pending) return undefined;
+    const attribution = attributedRuns.get(pending.runId);
+    if (!attribution) return undefined;
+    deletePendingEntry(pendingFollowups, pending.runId, pending.kind);
+    markDeliveredKind(pending.runId, pending.kind);
+    if (pending.kind === "completion") {
+      attributedRuns.delete(pending.runId);
+      deliveredStates.delete(pending.runId);
+    }
+    return {
+      chatId: attribution.chatId,
+      replyToMessageId: attribution.replyToMessageId,
+    };
+  }
+
   return {
     clear: () => {
       attributedRuns.clear();
       pendingFollowups.splice(0, pendingFollowups.length);
       deliveredStates.clear();
+      currentTurnRunId = undefined;
     },
     handleStarted: (payload) => {
       const runId = getAsyncRunId(payload);
@@ -179,34 +242,22 @@ export function createTelegramAsyncFollowupRuntime(
       if (!runId) return;
       markPending(runId, "needs_attention");
     },
-    peekPendingFollowupTarget: () => {
-      for (const next of pendingFollowups) {
-        const attribution = attributedRuns.get(next.runId);
-        if (!attribution) continue;
-        return {
-          chatId: attribution.chatId,
-          replyToMessageId: attribution.replyToMessageId,
-        };
+    handleMessageStart: (message) => {
+      if (!deps.isCurrentOwner() || currentTurnRunId || !isAsyncFollowupTurnMessage(message)) {
+        return;
       }
-      return undefined;
+      currentTurnRunId = getNextPendingRunId();
     },
-    consumePendingFollowupTarget: () => {
-      while (pendingFollowups.length > 0) {
-        const next = pendingFollowups.shift();
-        if (!next) return undefined;
-        const attribution = attributedRuns.get(next.runId);
-        if (!attribution) continue;
-        markDeliveredKind(next.runId, next.kind);
-        if (next.kind === "completion") {
-          attributedRuns.delete(next.runId);
-          deliveredStates.delete(next.runId);
-        }
-        return {
-          chatId: attribution.chatId,
-          replyToMessageId: attribution.replyToMessageId,
-        };
-      }
-      return undefined;
+    hasCurrentTurnFollowupTarget: () => getPendingTarget(currentTurnRunId) !== undefined,
+    clearCurrentTurn: () => {
+      currentTurnRunId = undefined;
+    },
+    peekPendingFollowupTarget: () => getPendingTarget(getNextPendingRunId()),
+    consumePendingFollowupTarget: () => consumeRunId(getNextPendingRunId()),
+    consumeCurrentTurnFollowupTarget: () => {
+      const target = consumeRunId(currentTurnRunId);
+      currentTurnRunId = undefined;
+      return target;
     },
   };
 }
