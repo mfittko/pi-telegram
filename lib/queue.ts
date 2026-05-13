@@ -819,7 +819,6 @@ export interface TelegramAgentEndRuntimeDeps<
     chatId: number;
     replyToMessageId: number | undefined;
   } | undefined;
-  clearCurrentAsyncFollowupTurn?: () => void;
   resetTransportReplyDedup?: () => void;
 }
 
@@ -1000,7 +999,6 @@ export function createTelegramAgentEndHook<
       peekPendingAsyncFollowupTarget: deps.peekPendingAsyncFollowupTarget,
       consumePendingAsyncFollowupTarget: deps.consumePendingAsyncFollowupTarget,
       consumeCurrentAsyncFollowupTarget: deps.consumeCurrentAsyncFollowupTarget,
-      clearCurrentAsyncFollowupTurn: deps.clearCurrentAsyncFollowupTurn,
       resetTransportReplyDedup: deps.resetTransportReplyDedup,
     });
     } finally {

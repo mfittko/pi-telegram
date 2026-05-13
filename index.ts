@@ -560,6 +560,11 @@ export default function (pi: Pi.ExtensionAPI) {
   const agentStartWithDedupReset = Lifecycle.createAgentStartDedupHook(
     agentLifecycleHooks.onAgentStart,
   );
+  const messageStartWithAsyncFollowupTracking =
+    Lifecycle.prependTelegramMessageStartHook(
+      asyncFollowupRuntime.handleMessageStart,
+      previewRuntime.onMessageStart,
+    );
   Lifecycle.registerTelegramLifecycleHooks(pi, {
     ...sessionLifecycleRuntime,
     ...agentLifecycleHooks,
@@ -569,10 +574,7 @@ export default function (pi: Pi.ExtensionAPI) {
       isCurrentOwner: lockOwnershipGuard.ownsContext,
     }),
     onModelSelect: currentModelRuntime.onModelSelect,
-    onMessageStart: async (event, ctx) => {
-      asyncFollowupRuntime.handleMessageStart(event.message);
-      await previewRuntime.onMessageStart(event, ctx);
-    },
+    onMessageStart: messageStartWithAsyncFollowupTracking,
     onMessageUpdate: previewRuntime.onMessageUpdate,
   });
 }
