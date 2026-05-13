@@ -948,39 +948,42 @@ export function createTelegramAgentEndHook<
     const turn = deps.getActiveTurn();
     const proactiveEnabled = deps.isProactivePushEnabled?.() ?? false;
     const asyncNotificationsEnabled = !!deps.notifyAsyncRunCompletion;
-    await handleTelegramAgentEndRuntime({
-      turn,
-      assistant:
-        turn || proactiveEnabled || asyncNotificationsEnabled
-          ? deps.extractAssistant(event.messages)
-          : {},
-      preserveQueuedTurnsAsHistory: deps.getPreserveQueuedTurnsAsHistory(),
-      resetRuntimeState: deps.resetRuntimeState,
-      updateStatus: () => deps.updateStatus(ctx),
-      isCurrentOwner: deps.isCurrentOwner
-        ? () => deps.isCurrentOwner?.(ctx) ?? false
-        : undefined,
-      dispatchNextQueuedTelegramTurn: () => {
-        deps.requestDeferredDispatchNextQueuedTelegramTurn(
-          deps.dispatchNextQueuedTelegramTurn,
-        );
-      },
-      clearPreview: deps.clearPreview,
-      setPreviewPendingText: deps.setPreviewPendingText,
-      finalizeMarkdownPreview: deps.finalizeMarkdownPreview,
-      sendMarkdownReply: deps.sendMarkdownReply,
-      sendTextReply: deps.sendTextReply,
-      sendQueuedAttachments: deps.sendQueuedAttachments,
-      answerGuestQuery: deps.answerGuestQuery,
-      sendGuestReply: deps.sendGuestReply,
-      planOutboundReply: deps.planOutboundReply,
-      sendOutboundReplyArtifacts: deps.sendOutboundReplyArtifacts,
-      getDefaultChatId: deps.getDefaultChatId,
-      isProactivePushEnabled: deps.isProactivePushEnabled,
-      recordRuntimeEvent: deps.recordRuntimeEvent,
-      notifyAsyncRunCompletion: deps.notifyAsyncRunCompletion,
-    });
-    if (!turn) deps.clearAsyncRunAttribution?.();
+    try {
+      await handleTelegramAgentEndRuntime({
+        turn,
+        assistant:
+          turn || proactiveEnabled || asyncNotificationsEnabled
+            ? deps.extractAssistant(event.messages)
+            : {},
+        preserveQueuedTurnsAsHistory: deps.getPreserveQueuedTurnsAsHistory(),
+        resetRuntimeState: deps.resetRuntimeState,
+        updateStatus: () => deps.updateStatus(ctx),
+        isCurrentOwner: deps.isCurrentOwner
+          ? () => deps.isCurrentOwner?.(ctx) ?? false
+          : undefined,
+        dispatchNextQueuedTelegramTurn: () => {
+          deps.requestDeferredDispatchNextQueuedTelegramTurn(
+            deps.dispatchNextQueuedTelegramTurn,
+          );
+        },
+        clearPreview: deps.clearPreview,
+        setPreviewPendingText: deps.setPreviewPendingText,
+        finalizeMarkdownPreview: deps.finalizeMarkdownPreview,
+        sendMarkdownReply: deps.sendMarkdownReply,
+        sendTextReply: deps.sendTextReply,
+        sendQueuedAttachments: deps.sendQueuedAttachments,
+        answerGuestQuery: deps.answerGuestQuery,
+        sendGuestReply: deps.sendGuestReply,
+        planOutboundReply: deps.planOutboundReply,
+        sendOutboundReplyArtifacts: deps.sendOutboundReplyArtifacts,
+        getDefaultChatId: deps.getDefaultChatId,
+        isProactivePushEnabled: deps.isProactivePushEnabled,
+        recordRuntimeEvent: deps.recordRuntimeEvent,
+        notifyAsyncRunCompletion: deps.notifyAsyncRunCompletion,
+      });
+    } finally {
+      deps.clearAsyncRunAttribution?.();
+    }
   };
 }
 

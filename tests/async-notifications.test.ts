@@ -390,6 +390,21 @@ test("Proactive before-agent-start hook skips attribution when no default chat I
   assert.deepEqual(events, []);
 });
 
+test("Proactive before-agent-start hook honors custom Telegram prefixes", async () => {
+  const events: number[] = [];
+  const hook = createTelegramProactiveBeforeAgentStartHook({
+    telegramPrefix: "[guest]",
+    isProactivePushEnabled: () => true,
+    isCurrentOwner: () => true,
+    onAttributedRunStart: (chatId) => {
+      events.push(chatId);
+    },
+    getDefaultChatId: () => 42,
+  });
+  await hook(createBeforeAgentStartEvent("[guest] hello"), "ctx");
+  assert.deepEqual(events, [42]);
+});
+
 // --- Integration: agent_end runtime with async notifications ---
 
 test("Agent end runtime calls async notification handler for attributed failure runs", async () => {
@@ -493,7 +508,40 @@ test("Agent end runtime does not call async notification handler when there is a
   assert.deepEqual(events, []);
 });
 
-test("Agent end hook clears async run attribution only after a no-turn completion", async () => {
+test("Agent end runtime stays silent for no-turn async notifications after ownership loss", async () => {
+  const store = createTelegramAsyncRunAttributionStore();
+  const events: string[] = [];
+  const handler = createTelegramAsyncRunNotificationHandler({
+    getAttribution: store.getAttribution,
+    hasNotified: store.hasNotified,
+    markNotified: store.markNotified,
+    isProactivePushEnabled: () => true,
+    sendMarkdownReply: async (_chatId, _replyTo, text) => {
+      events.push(text);
+    },
+  });
+  store.beginRun(9);
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: { stopReason: "error" },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {},
+    updateStatus: () => {},
+    isCurrentOwner: () => false,
+    dispatchNextQueuedTelegramTurn: () => {},
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {},
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    notifyAsyncRunCompletion: handler,
+  });
+  await flushMicrotasks();
+  assert.deepEqual(events, []);
+});
+
+test("Agent end hook clears async run attribution after a no-turn completion", async () => {
   const store = createTelegramAsyncRunAttributionStore();
   let notificationCalls = 0;
   const hook = createTelegramAgentEndHook({
@@ -521,7 +569,7 @@ test("Agent end hook clears async run attribution only after a no-turn completio
   assert.equal(store.getAttribution(), undefined);
 });
 
-test("Agent end hook preserves async run attribution across attributed foreground turn completion", async () => {
+test("Agent end hook clears async run attribution after attributed foreground turn completion", async () => {
   const store = createTelegramAsyncRunAttributionStore();
   const turn = createTestPromptTurn();
   const hook = createTelegramAgentEndHook({
@@ -540,7 +588,38 @@ test("Agent end hook preserves async run attribution across attributed foregroun
     sendQueuedAttachments: async () => {},
     clearAsyncRunAttribution: store.clearAttribution,
   });
-  const token = store.beginRun(9);
+  store.beginRun(9);
   await hook({ messages: [] }, "ctx" as never);
-  assert.deepEqual(store.getAttribution(), { chatId: 9, runToken: token });
+  assert.equal(store.getAttribution(), undefined);
+});
+
+test("Agent end hook clears async run attribution even when delivery throws", async () => {
+  const store = createTelegramAsyncRunAttributionStore();
+  const turn = createTestPromptTurn({
+    queuedAttachments: [{ path: "/tmp/file.txt", fileName: "file.txt" }],
+  });
+  const hook = createTelegramAgentEndHook({
+    getActiveTurn: () => turn,
+    extractAssistant: () => ({ text: "done" }),
+    getPreserveQueuedTurnsAsHistory: () => false,
+    resetRuntimeState: () => {},
+    updateStatus: () => {},
+    requestDeferredDispatchNextQueuedTelegramTurn: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => true,
+    sendMarkdownReply: async () => {},
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {
+      throw new Error("delivery failed");
+    },
+    clearAsyncRunAttribution: store.clearAttribution,
+  });
+  store.beginRun(9);
+  await assert.rejects(
+    () => hook({ messages: [] }, "ctx" as never),
+    /delivery failed/,
+  );
+  assert.equal(store.getAttribution(), undefined);
 });

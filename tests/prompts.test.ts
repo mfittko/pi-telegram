@@ -99,3 +99,29 @@ test("Prompt helpers leave local prompts private for proactive result push", asy
   );
   assert.deepEqual(result, { systemPrompt: "base\nbridge active" });
 });
+
+test("Prompt helpers honor custom Telegram prefixes for proactive attribution", async () => {
+  const chatIds: number[] = [];
+  const hook = createTelegramProactiveBeforeAgentStartHook({
+    telegramPrefix: "[guest]",
+    baseHook: createTelegramBeforeAgentStartHook({
+      telegramPrefix: "[guest]",
+      systemPromptSuffix: "\nbridge active",
+    }),
+    isProactivePushEnabled: () => true,
+    isCurrentOwner: () => true,
+    onAttributedRunStart: (chatId) => {
+      chatIds.push(chatId);
+    },
+    getDefaultChatId: () => 7,
+  });
+  const result = await hook(
+    createBeforeAgentStartEvent("[guest] hello", "base"),
+    "ctx",
+  );
+  assert.deepEqual(chatIds, [7]);
+  assert.deepEqual(result, {
+    systemPrompt:
+      "base\nbridge active\n- The current user message came from Telegram.",
+  });
+});
