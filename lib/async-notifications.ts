@@ -88,8 +88,8 @@ export interface TelegramAsyncRunNotificationHandlerDeps {
 
 export function createTelegramAsyncRunNotificationHandler(
   deps: TelegramAsyncRunNotificationHandlerDeps,
-): (stopReason: string | undefined) => Promise<void> {
-  return async function handleAsyncRunCompletion(stopReason) {
+): (stopReason: string | undefined) => void {
+  return function handleAsyncRunCompletion(stopReason) {
     if (!deps.isProactivePushEnabled()) return;
     const state = getTelegramAsyncRunNotificationState(stopReason);
     if (!state) return;
@@ -98,14 +98,14 @@ export function createTelegramAsyncRunNotificationHandler(
     if (deps.hasNotified(attribution.runToken)) return;
     deps.markNotified(attribution.runToken);
     const text = buildTelegramAsyncRunNotificationText(state);
-    try {
-      await deps.sendMarkdownReply(attribution.chatId, undefined, text);
-    } catch (error) {
-      deps.recordRuntimeEvent?.("async-notification", error, {
-        chatId: attribution.chatId,
-        state,
+    queueMicrotask(() => {
+      void deps.sendMarkdownReply(attribution.chatId, undefined, text).catch((error) => {
+        deps.recordRuntimeEvent?.("async-notification", error, {
+          chatId: attribution.chatId,
+          state,
+        });
       });
-    }
+    });
   };
 }
 

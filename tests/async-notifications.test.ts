@@ -18,7 +18,10 @@ import {
   createTelegramProactiveBeforeAgentStartHook,
   createTelegramBeforeAgentStartHook,
 } from "../lib/prompts.ts";
-import { handleTelegramAgentEndRuntime } from "../lib/queue.ts";
+import {
+  createTelegramAgentEndHook,
+  handleTelegramAgentEndRuntime,
+} from "../lib/queue.ts";
 import type { PendingTelegramTurn } from "../lib/queue.ts";
 
 type BeforeAgentStartEvent = Parameters<
@@ -30,6 +33,11 @@ function createBeforeAgentStartEvent(
   systemPrompt = "base",
 ): BeforeAgentStartEvent {
   return { prompt, systemPrompt } as BeforeAgentStartEvent;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function createTestPromptTurn(
@@ -129,7 +137,8 @@ test("Async notification handler sends failure notification for attributed run",
     },
   });
   store.beginRun(9);
-  await handler("error");
+  handler("error");
+  await flushMicrotasks();
   const failureText = buildTelegramAsyncRunNotificationText("failure");
   assert.deepEqual(events, [`reply:9:undefined:${failureText}`]);
   // Deduplication state should be marked after delivery
@@ -153,7 +162,8 @@ test("Async notification handler sends needs_attention notification for attribut
     },
   });
   store.beginRun(9);
-  await handler("length");
+  handler("length");
+  await flushMicrotasks();
   const needsAttentionText =
     buildTelegramAsyncRunNotificationText("needs_attention");
   assert.deepEqual(events, [`reply:9:undefined:${needsAttentionText}`]);
@@ -178,9 +188,10 @@ test("Async notification handler stays silent for success and aborted stop reaso
     },
   });
   store.beginRun(9);
-  await handler("stop");
-  await handler("aborted");
-  await handler(undefined);
+  handler("stop");
+  handler("aborted");
+  handler(undefined);
+  await flushMicrotasks();
   assert.deepEqual(events, []);
 });
 
@@ -197,7 +208,8 @@ test("Async notification handler stays silent when proactive push is disabled", 
     },
   });
   store.beginRun(9);
-  await handler("error");
+  handler("error");
+  await flushMicrotasks();
   assert.deepEqual(events, []);
 });
 
@@ -214,7 +226,8 @@ test("Async notification handler stays silent for runs without attribution", asy
     },
   });
   // No beginRun called — no attribution
-  await handler("error");
+  handler("error");
+  await flushMicrotasks();
   assert.deepEqual(events, []);
 });
 
@@ -231,8 +244,9 @@ test("Async notification handler deduplicates notifications for the same run tok
     },
   });
   store.beginRun(9);
-  await handler("error");
-  await handler("error");
+  handler("error");
+  handler("error");
+  await flushMicrotasks();
   assert.equal(events.length, 1, "should only send once for same run token");
 });
 
@@ -252,10 +266,37 @@ test("Async notification handler records delivery failures in runtime events", a
     },
   });
   store.beginRun(5);
-  await handler("error");
+  handler("error");
+  await flushMicrotasks();
   assert.equal(runtimeEvents.length, 1);
   assert.equal(runtimeEvents[0]?.category, "async-notification");
   assert.deepEqual(runtimeEvents[0]?.details, { chatId: 5, state: "failure" });
+});
+
+test("Async notification handler does not await Telegram delivery inline", async () => {
+  const store = createTelegramAsyncRunAttributionStore();
+  let deliveryStarted = false;
+  let resolveDelivery: (() => void) | undefined;
+  const delivery = new Promise<void>((resolve) => {
+    resolveDelivery = resolve;
+  });
+  const handler = createTelegramAsyncRunNotificationHandler({
+    getAttribution: store.getAttribution,
+    hasNotified: store.hasNotified,
+    markNotified: store.markNotified,
+    isProactivePushEnabled: () => true,
+    sendMarkdownReply: async () => {
+      deliveryStarted = true;
+      await delivery;
+    },
+  });
+  store.beginRun(11);
+  handler("error");
+  assert.equal(deliveryStarted, false);
+  await flushMicrotasks();
+  assert.equal(deliveryStarted, true);
+  resolveDelivery?.();
+  await flushMicrotasks();
 });
 
 // --- Session Lifecycle Hooks ---
@@ -379,6 +420,7 @@ test("Agent end runtime calls async notification handler for attributed failure 
     sendQueuedAttachments: async () => {},
     notifyAsyncRunCompletion: handler,
   });
+  await flushMicrotasks();
   const failureText = buildTelegramAsyncRunNotificationText("failure");
   assert.deepEqual(events, [`notify:9:${failureText}`]);
 });
@@ -411,6 +453,7 @@ test("Agent end runtime calls async notification handler for attributed needs-at
     sendQueuedAttachments: async () => {},
     notifyAsyncRunCompletion: handler,
   });
+  await flushMicrotasks();
   const needsAttentionText =
     buildTelegramAsyncRunNotificationText("needs_attention");
   assert.deepEqual(events, [`notify:9:${needsAttentionText}`]);
@@ -445,20 +488,59 @@ test("Agent end runtime does not call async notification handler when there is a
     sendQueuedAttachments: async () => {},
     notifyAsyncRunCompletion: handler,
   });
+  await flushMicrotasks();
   // The notification handler is not called for the !turn case when turn exists
   assert.deepEqual(events, []);
 });
 
-test("Agent end runtime clears async run attribution after handling", async () => {
+test("Agent end hook clears async run attribution only after a no-turn completion", async () => {
   const store = createTelegramAsyncRunAttributionStore();
-  let cleared = false;
+  let notificationCalls = 0;
+  const hook = createTelegramAgentEndHook({
+    getActiveTurn: () => undefined,
+    extractAssistant: () => ({ stopReason: "error" }),
+    getPreserveQueuedTurnsAsHistory: () => false,
+    resetRuntimeState: () => {},
+    updateStatus: () => {},
+    requestDeferredDispatchNextQueuedTelegramTurn: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {},
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    notifyAsyncRunCompletion: () => {
+      notificationCalls += 1;
+    },
+    clearAsyncRunAttribution: store.clearAttribution,
+  });
   store.beginRun(9);
-  assert.ok(store.getAttribution() !== undefined);
-  // clearAsyncRunAttribution is called after handleTelegramAgentEndRuntime returns
-  // via createTelegramAgentEndHook; test the hook creation path separately
-  // Verify that clearAttribution directly works
-  store.clearAttribution();
-  cleared = true;
+  await hook({ messages: [] }, "ctx" as never);
+  assert.equal(notificationCalls, 1);
   assert.equal(store.getAttribution(), undefined);
-  assert.ok(cleared);
+});
+
+test("Agent end hook preserves async run attribution across attributed foreground turn completion", async () => {
+  const store = createTelegramAsyncRunAttributionStore();
+  const turn = createTestPromptTurn();
+  const hook = createTelegramAgentEndHook({
+    getActiveTurn: () => turn,
+    extractAssistant: () => ({ text: "done" }),
+    getPreserveQueuedTurnsAsHistory: () => false,
+    resetRuntimeState: () => {},
+    updateStatus: () => {},
+    requestDeferredDispatchNextQueuedTelegramTurn: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {},
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    clearAsyncRunAttribution: store.clearAttribution,
+  });
+  const token = store.beginRun(9);
+  await hook({ messages: [] }, "ctx" as never);
+  assert.deepEqual(store.getAttribution(), { chatId: 9, runToken: token });
 });

@@ -810,7 +810,7 @@ export interface TelegramAgentEndRuntimeDeps<
    * for failure and needs-attention states when the run is Telegram-attributed.
    * Deduplication and attribution checks are owned by the implementation.
    */
-  notifyAsyncRunCompletion?: (stopReason: string | undefined) => Promise<void>;
+  notifyAsyncRunCompletion?: (stopReason: string | undefined) => void;
 }
 
 export interface TelegramAgentEndHookRuntimeDeps<
@@ -980,7 +980,7 @@ export function createTelegramAgentEndHook<
       recordRuntimeEvent: deps.recordRuntimeEvent,
       notifyAsyncRunCompletion: deps.notifyAsyncRunCompletion,
     });
-    deps.clearAsyncRunAttribution?.();
+    if (!turn) deps.clearAsyncRunAttribution?.();
   };
 }
 

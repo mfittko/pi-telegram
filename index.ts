@@ -443,10 +443,16 @@ export default function (pi: Pi.ExtensionAPI) {
     stopPolling: lockedPollingRuntime.suspend,
     recordRuntimeEvent,
   });
-  const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
+  const sessionLifecycleWithPolling = Lifecycle.appendTelegramLifecycleHooks(
     queueSessionLifecycle,
     {
       onSessionStart: lockedPollingRuntime.onSessionStart,
+    },
+  );
+  const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
+    sessionLifecycleWithPolling,
+    {
+      onSessionStart: asyncRunSessionHooks.onSessionStart,
       onSessionShutdown: asyncRunSessionHooks.onSessionShutdown,
     },
   );
