@@ -269,6 +269,9 @@ test("Locked polling runtime stops after ownership loss without live context", a
       updateStatus: () => {
         events.push("status");
       },
+      onOwnershipLoss: () => {
+        events.push("ownership-loss");
+      },
       recordRuntimeEvent: (category, error, details) => {
         runtimeEvents.push({
           category,
@@ -280,7 +283,7 @@ test("Locked polling runtime stops after ownership loss without live context", a
     assert.equal((await runtime.start(ctx)).ok, true);
     writeFileSync(temp.path, JSON.stringify({}));
     await waitForCondition(() => events.includes("stop"));
-    assert.deepEqual(events, ["start", "status", "stop"]);
+    assert.deepEqual(events, ["start", "status", "ownership-loss", "stop"]);
     assert.deepEqual(runtimeEvents, []);
   } finally {
     rmSync(temp.dir, { recursive: true, force: true });

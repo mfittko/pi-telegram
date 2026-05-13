@@ -1019,7 +1019,7 @@ export async function handleTelegramAgentEndRuntime<
   if (!turn) {
     const asyncFollowupTarget = deps.consumePendingAsyncFollowupTarget?.();
     if (asyncFollowupTarget) {
-      if (finalText && !assistant.errorMessage) {
+      if (finalText) {
         try {
           await deps.sendMarkdownReply(
             asyncFollowupTarget.chatId,

@@ -950,6 +950,53 @@ Fix the actionable review findings.
   ]);
 });
 
+test("Agent end runtime mirrors no-turn async follow-up text even when assistant also reports an error", async () => {
+  const events: unknown[] = [];
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: {
+      text: "Async review failed, see the attached diagnosis.",
+      errorMessage: "tool failed",
+    },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async (chatId, replyToMessageId, markdown) => {
+      events.push({ chatId, replyToMessageId, markdown });
+    },
+    sendTextReply: async () => {},
+    sendQueuedAttachments: async () => {},
+    peekPendingAsyncFollowupTarget: () => ({
+      chatId: 7,
+      replyToMessageId: 11,
+    }),
+    consumePendingAsyncFollowupTarget: () => ({
+      chatId: 7,
+      replyToMessageId: 11,
+    }),
+  });
+  assert.deepEqual(events, [
+    "reset",
+    "status",
+    {
+      chatId: 7,
+      replyToMessageId: 11,
+      markdown: "Async review failed, see the attached diagnosis.",
+    },
+    "dispatch",
+  ]);
+});
+
 test("Agent end runtime clears dropped no-turn async mirror state with no sendable text", async () => {
   const events: string[] = [];
   let consumed = false;

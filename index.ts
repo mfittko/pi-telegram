@@ -403,6 +403,7 @@ export default function (pi: Pi.ExtensionAPI) {
     startPolling: pollingRuntime.start,
     stopPolling: pollingRuntime.stop,
     updateStatus,
+    onOwnershipLoss: asyncFollowupRuntime.clear,
     recordRuntimeEvent,
   });
   const queueSessionLifecycle = Queue.createTelegramSessionLifecycleRuntime<

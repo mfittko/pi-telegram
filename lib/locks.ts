@@ -101,6 +101,7 @@ export interface TelegramLockedPollingRuntimeDeps<
   startPolling: (ctx: TContext) => void | Promise<void>;
   stopPolling: () => Promise<void>;
   updateStatus: (ctx: TContext) => void;
+  onOwnershipLoss?: () => void | Promise<void>;
   recordRuntimeEvent?: (
     category: string,
     error: unknown,
@@ -274,8 +275,14 @@ export function createTelegramLockedPollingRuntime<
   const stopAfterOwnershipLoss = () => {
     if (ownershipStop) return;
     stopOwnershipWatcher();
-    ownershipStop = deps
-      .stopPolling()
+    ownershipStop = Promise.resolve()
+      .then(() => deps.onOwnershipLoss?.())
+      .catch((error) =>
+        deps.recordRuntimeEvent?.("lock", error, {
+          phase: "ownership-loss-cleanup",
+        }),
+      )
+      .then(() => deps.stopPolling())
       .catch((error) =>
         deps.recordRuntimeEvent?.("lock", error, { phase: "ownership-loss" }),
       )
