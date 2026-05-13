@@ -950,7 +950,8 @@ export function createTelegramAgentEndHook<
   ): Promise<void> {
     const turn = deps.getActiveTurn();
     const proactiveEnabled = deps.isProactivePushEnabled?.() ?? false;
-    const asyncFollowupEnabled = !!deps.consumePendingAsyncFollowupTarget;
+    const asyncFollowupEnabled =
+      deps.peekPendingAsyncFollowupTarget?.() !== undefined;
     await handleTelegramAgentEndRuntime({
       turn,
       assistant:

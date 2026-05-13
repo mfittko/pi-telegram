@@ -147,6 +147,7 @@ export function createTelegramAsyncFollowupRuntime(
   }
 
   function markPending(runId: string, kind: TelegramAsyncFollowupKind): void {
+    if (!deps.isCurrentOwner()) return;
     if (!attributedRuns.has(runId) || hasDeliveredKind(runId, kind)) return;
     if (hasPendingKind(pendingFollowups, runId, kind)) return;
     if (kind === "completion") {

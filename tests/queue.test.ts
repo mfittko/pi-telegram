@@ -1367,6 +1367,62 @@ test("Agent end hook binds assistant extraction and runtime ports", async () => 
   ]);
 });
 
+test("Agent end hook skips assistant extraction for no-turn outputs without delivery paths", async () => {
+  const events: string[] = [];
+  const hook = createTelegramAgentEndHook<
+    PendingTelegramTurn,
+    { id: string },
+    string
+  >({
+    getActiveTurn: () => undefined,
+    extractAssistant: (messages) => {
+      events.push(`unexpected:extract:${messages.join(",")}`);
+      return { text: "final" };
+    },
+    getPreserveQueuedTurnsAsHistory: () => false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: (ctx) => {
+      events.push(`status:${ctx.id}`);
+    },
+    dispatchNextQueuedTelegramTurn: (ctx) => {
+      events.push(`dispatch:${ctx.id}`);
+    },
+    requestDeferredDispatchNextQueuedTelegramTurn: (dispatch) => {
+      setTimeout(() => dispatch({ id: "ctx" }), 0);
+    },
+    clearPreview: async () => {
+      events.push("unexpected:clear");
+    },
+    setPreviewPendingText: () => {
+      events.push("unexpected:preview");
+    },
+    finalizeMarkdownPreview: async () => {
+      events.push("unexpected:finalize");
+      return true;
+    },
+    sendMarkdownReply: async () => {
+      events.push("unexpected:markdown");
+    },
+    sendTextReply: async () => {
+      events.push("unexpected:text");
+    },
+    sendQueuedAttachments: async () => {
+      events.push("unexpected:attachments");
+    },
+    peekPendingAsyncFollowupTarget: () => undefined,
+    consumePendingAsyncFollowupTarget: () => {
+      events.push("consume");
+      return undefined;
+    },
+  });
+  await hook({ messages: ["a", "b"] }, { id: "ctx" });
+  assert.deepEqual(events, ["reset", "status:ctx", "consume"]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(events, ["reset", "status:ctx", "consume", "dispatch:ctx"]);
+});
+
 test("Agent end runtime reports errors and dispatches next turn", async () => {
   const events: string[] = [];
   await handleTelegramAgentEndRuntime({

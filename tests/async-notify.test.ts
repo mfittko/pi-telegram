@@ -97,6 +97,22 @@ test("Async notify suppresses attribution when the current bridge no longer owns
   assert.equal(runtime.peekPendingFollowupTarget(), undefined);
 });
 
+test("Async notify does not queue pending follow-ups after owner loss", () => {
+  let isOwner = true;
+  const runtime = createTelegramAsyncFollowupRuntime({
+    getActiveTurn: () => createAsyncNotifyTurn(),
+    isCurrentOwner: () => isOwner,
+  });
+  runtime.handleStarted({ id: "run-1" });
+  isOwner = false;
+  runtime.handleControl({
+    source: "async",
+    event: { type: "needs_attention", runId: "run-1" },
+  });
+  runtime.handleCompleted({ id: "run-1" });
+  assert.equal(runtime.peekPendingFollowupTarget(), undefined);
+});
+
 test("Async notify deduplicates pending follow-ups and prefers completion over stale pending attention", () => {
   const runtime = createTelegramAsyncFollowupRuntime({
     getActiveTurn: () => createAsyncNotifyTurn(),
