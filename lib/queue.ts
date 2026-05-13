@@ -805,6 +805,7 @@ export interface TelegramAgentEndRuntimeDeps<
     error: unknown,
     details?: Record<string, unknown>,
   ) => void;
+  clearAsyncFollowupState?: () => void;
   peekPendingAsyncFollowupTarget?: () => {
     chatId: number;
     replyToMessageId: number | undefined;
@@ -855,6 +856,7 @@ export interface TelegramAgentEndHookRuntimeDeps<
   getDefaultChatId?: TelegramAgentEndRuntimeDeps<TTurn>["getDefaultChatId"];
   isProactivePushEnabled?: TelegramAgentEndRuntimeDeps<TTurn>["isProactivePushEnabled"];
   recordRuntimeEvent?: TelegramAgentEndRuntimeDeps<TTurn>["recordRuntimeEvent"];
+  clearAsyncFollowupState?: TelegramAgentEndRuntimeDeps<TTurn>["clearAsyncFollowupState"];
   peekPendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["peekPendingAsyncFollowupTarget"];
   consumePendingAsyncFollowupTarget?: TelegramAgentEndRuntimeDeps<TTurn>["consumePendingAsyncFollowupTarget"];
 }
@@ -979,6 +981,7 @@ export function createTelegramAgentEndHook<
       getDefaultChatId: deps.getDefaultChatId,
       isProactivePushEnabled: deps.isProactivePushEnabled,
       recordRuntimeEvent: deps.recordRuntimeEvent,
+      clearAsyncFollowupState: deps.clearAsyncFollowupState,
       peekPendingAsyncFollowupTarget: deps.peekPendingAsyncFollowupTarget,
       consumePendingAsyncFollowupTarget: deps.consumePendingAsyncFollowupTarget,
     });
@@ -1001,6 +1004,7 @@ export async function handleTelegramAgentEndRuntime<
   deps.resetRuntimeState();
   deps.updateStatus();
   if (deps.isCurrentOwner && !deps.isCurrentOwner()) {
+    deps.clearAsyncFollowupState?.();
     if (turn) await deps.clearPreview(turn.chatId);
     return;
   }

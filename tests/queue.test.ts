@@ -995,6 +995,49 @@ test("Agent end runtime consumes pending no-turn async mirror only once", async 
   ]);
 });
 
+test("Agent end runtime clears pending no-turn async mirror state after owner loss", async () => {
+  const events: string[] = [];
+  let cleared = 0;
+  await handleTelegramAgentEndRuntime({
+    turn: undefined,
+    assistant: { text: "Async review finished." },
+    preserveQueuedTurnsAsHistory: false,
+    resetRuntimeState: () => {
+      events.push("reset");
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    isCurrentOwner: () => false,
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("unexpected:dispatch");
+    },
+    clearPreview: async () => {
+      events.push("unexpected:clear");
+    },
+    setPreviewPendingText: () => {
+      events.push("unexpected:preview");
+    },
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => {
+      events.push("unexpected:markdown");
+    },
+    sendTextReply: async () => {
+      events.push("unexpected:text");
+    },
+    sendQueuedAttachments: async () => {
+      events.push("unexpected:attachments");
+    },
+    clearAsyncFollowupState: () => {
+      cleared += 1;
+    },
+    peekPendingAsyncFollowupTarget: () => ({ chatId: 7, replyToMessageId: 11 }),
+    consumePendingAsyncFollowupTarget: () => ({ chatId: 7, replyToMessageId: 11 }),
+  });
+  assert.deepEqual(events, ["reset", "status"]);
+  assert.equal(cleared, 1);
+});
+
 test("Agent end runtime stays silent when Telegram lock moved away", async () => {
   const events: string[] = [];
   const turn: PendingTelegramTurn = createQueueTestPromptTurn({

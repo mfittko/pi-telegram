@@ -539,6 +539,7 @@ export default function (pi: Pi.ExtensionAPI) {
     getDefaultChatId: proactivePushChatIdGetter,
     isProactivePushEnabled,
     recordRuntimeEvent,
+    clearAsyncFollowupState: asyncFollowupRuntime.clear,
     peekPendingAsyncFollowupTarget:
       asyncFollowupRuntime.peekPendingFollowupTarget,
     consumePendingAsyncFollowupTarget:

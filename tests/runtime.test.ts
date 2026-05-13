@@ -819,7 +819,7 @@ Fix the actionable review findings on the current branch.
       ctx,
     );
     assert.equal(sentTexts.length, 1);
-    assert.match(sentTexts[0] ?? "", /Async review finished\./);
+    assert.equal(sentTexts[0], "Async review finished.");
     assert.deepEqual(sentBodies[0]?.reply_parameters, {
       message_id: 7,
       allow_sending_without_reply: true,
