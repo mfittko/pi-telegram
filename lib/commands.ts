@@ -317,6 +317,11 @@ export interface TelegramCompactCommandDeps extends TelegramRuntimeEventRecorder
   setCompactionInProgress: (inProgress: boolean) => void;
   updateStatus: () => void;
   dispatchNextQueuedTelegramTurn: () => void;
+  requestDeferredDispatchNextQueuedTelegramTurn?: (
+    dispatch: () => void,
+  ) => void;
+  startTypingLoop?: () => void;
+  stopTypingLoop?: () => void;
   compact: (callbacks: {
     onComplete: () => void;
     onError: (error: unknown) => void;
@@ -547,6 +552,11 @@ export interface TelegramCommandRuntimeDeps<
   setCompactionInProgress: (inProgress: boolean) => void;
   updateStatus: (ctx: TContext) => void;
   dispatchNextQueuedTelegramTurn: (ctx: TContext) => void;
+  requestDeferredDispatchNextQueuedTelegramTurn?: (
+    dispatch: (ctx: TContext) => void,
+  ) => void;
+  startTypingLoop?: (ctx: TContext, chatId?: number) => void;
+  stopTypingLoop?: () => void;
   enqueueContinueTurn: (message: TMessage, ctx: TContext) => Promise<void>;
   compact: (
     ctx: TContext,
@@ -573,7 +583,7 @@ export interface TelegramCommandRuntimeDeps<
 }
 
 export const TELEGRAM_APP_MENU_INTRO_HTML = [
-  "<b>π Telegram bridge</b>",
+  "<b>π Telegram</b>",
   "",
   `${formatTelegramCommandEmojiPrefix("start")}/start — Open menu / Pair bridge`,
   `${formatTelegramCommandEmojiPrefix("compact")}/compact — Compact current session`,
@@ -758,6 +768,22 @@ export async function handleTelegramContinueCommand<TMessage, TContext>(
   await deps.enqueueContinueTurn(message, ctx);
 }
 
+function dispatchNextQueuedTelegramTurnAfterCompact(
+  deps: Pick<
+    TelegramCompactCommandDeps,
+    | "dispatchNextQueuedTelegramTurn"
+    | "requestDeferredDispatchNextQueuedTelegramTurn"
+  >,
+): void {
+  if (deps.requestDeferredDispatchNextQueuedTelegramTurn) {
+    deps.requestDeferredDispatchNextQueuedTelegramTurn(
+      deps.dispatchNextQueuedTelegramTurn,
+    );
+    return;
+  }
+  deps.dispatchNextQueuedTelegramTurn();
+}
+
 export async function handleTelegramCompactCommand(
   deps: TelegramCompactCommandDeps,
 ): Promise<void> {
@@ -776,24 +802,31 @@ export async function handleTelegramCompactCommand(
   }
   deps.setCompactionInProgress(true);
   deps.updateStatus();
+  let compactionStillInProgress = true;
   try {
     deps.compact({
       onComplete: () => {
+        compactionStillInProgress = false;
+        deps.stopTypingLoop?.();
         deps.setCompactionInProgress(false);
         deps.updateStatus();
-        deps.dispatchNextQueuedTelegramTurn();
+        dispatchNextQueuedTelegramTurnAfterCompact(deps);
         void deps.sendTextReply("Compaction completed.");
       },
       onError: (error) => {
+        compactionStillInProgress = false;
+        deps.stopTypingLoop?.();
         deps.setCompactionInProgress(false);
         deps.updateStatus();
-        deps.dispatchNextQueuedTelegramTurn();
+        dispatchNextQueuedTelegramTurnAfterCompact(deps);
         deps.recordRuntimeEvent?.("compact", error);
         const errorMessage = getTelegramCommandErrorMessage(error);
         void deps.sendTextReply(`Compaction failed: ${errorMessage}`);
       },
     });
   } catch (error) {
+    compactionStillInProgress = false;
+    deps.stopTypingLoop?.();
     deps.setCompactionInProgress(false);
     deps.updateStatus();
     deps.recordRuntimeEvent?.("compact", error);
@@ -802,20 +835,37 @@ export async function handleTelegramCompactCommand(
     return;
   }
   await deps.sendTextReply("Compaction started.");
+  if (compactionStillInProgress) deps.startTypingLoop?.();
+}
+
+function isTelegramStaleContextError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("stale after session") ||
+      error.message.includes("stale ctx"))
+  );
 }
 
 export async function handleTelegramStatusCommand<TContext>(deps: {
   ctx: TContext;
   showStatus: (ctx: TContext) => Promise<void>;
 }): Promise<void> {
-  await deps.showStatus(deps.ctx);
+  try {
+    await deps.showStatus(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
 }
 
 export async function handleTelegramModelCommand<TContext>(deps: {
   ctx: TContext;
   openModelMenu: (ctx: TContext) => Promise<void>;
 }): Promise<void> {
-  await deps.openModelMenu(deps.ctx);
+  try {
+    await deps.openModelMenu(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
 }
 
 export async function executeTelegramCommandAction<TMessage, TContext>(
@@ -924,6 +974,8 @@ export function createTelegramCommandHandlerTargetRuntime<
     setCompactionInProgress: deps.setCompactionInProgress,
     updateStatus: deps.updateStatus,
     dispatchNextQueuedTelegramTurn: deps.dispatchNextQueuedTelegramTurn,
+    startTypingLoop: deps.startTypingLoop,
+    stopTypingLoop: deps.stopTypingLoop,
     enqueueContinueTurn: deps.enqueueContinueTurn,
     compact: deps.compact,
     enqueueControlItem: commandTargetRuntime.enqueueControlItem,
@@ -1069,7 +1121,18 @@ async function handleTelegramCommandRuntime<
           updateStatus: updateStatusFor(commandCtx),
           dispatchNextQueuedTelegramTurn: () =>
             deps.dispatchNextQueuedTelegramTurn(commandCtx),
+          requestDeferredDispatchNextQueuedTelegramTurn:
+            deps.requestDeferredDispatchNextQueuedTelegramTurn
+              ? (dispatch) =>
+                  deps.requestDeferredDispatchNextQueuedTelegramTurn?.(() =>
+                    dispatch(),
+                  )
+              : undefined,
           compact: (callbacks) => deps.compact(commandCtx, callbacks),
+          startTypingLoop: deps.startTypingLoop
+            ? () => deps.startTypingLoop?.(commandCtx, nextMessage.chat.id)
+            : undefined,
+          stopTypingLoop: deps.stopTypingLoop,
           sendTextReply: sendReplyFor(nextMessage),
           recordRuntimeEvent: deps.recordRuntimeEvent,
         });

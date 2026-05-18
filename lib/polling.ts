@@ -91,7 +91,8 @@ export function createTelegramPollingActivityReader(
   return () => isTelegramPollingControllerActive(state);
 }
 
-export interface TelegramPollingRuntimeDeps<TContext> {
+export interface TelegramPollingRuntimeDeps<TContext>
+  extends TelegramRuntimeEventRecorderPort {
   hasBotToken: () => boolean;
   getPollingPromise: () => Promise<void> | undefined;
   setPollingPromise: (promise: Promise<void> | undefined) => void;
@@ -150,6 +151,7 @@ export function createTelegramPollingControllerRuntime<
     }),
     updateStatus: deps.updateStatus,
     createAbortController: deps.createAbortController,
+    recordRuntimeEvent: deps.recordRuntimeEvent,
   });
 }
 
@@ -191,6 +193,22 @@ export async function stopTelegramPollingRuntime<TContext>(
   deps.setPollingPromise(undefined);
 }
 
+function updateTelegramPollingStatusSafely<TContext>(
+  updateStatus: (ctx: TContext, message?: string) => void,
+  ctx: TContext,
+  options: {
+    message?: string;
+    recordRuntimeEvent?: TelegramRuntimeEventRecorderPort["recordRuntimeEvent"];
+  } = {},
+): void {
+  try {
+    updateStatus(ctx, options.message);
+  } catch (error) {
+    // The polling loop can outlive the session context it captured.
+    options.recordRuntimeEvent?.("polling", error, { phase: "status-update" });
+  }
+}
+
 export function startTelegramPollingRuntime<TContext>(
   ctx: TContext,
   deps: TelegramPollingRuntimeDeps<TContext>,
@@ -208,10 +226,14 @@ export function startTelegramPollingRuntime<TContext>(
   const promise = deps.runPollLoop(ctx, controller.signal).finally(() => {
     deps.setPollingPromise(undefined);
     deps.setPollingController(undefined);
-    deps.updateStatus(ctx);
+    updateTelegramPollingStatusSafely(deps.updateStatus, ctx, {
+      recordRuntimeEvent: deps.recordRuntimeEvent,
+    });
   });
   deps.setPollingPromise(promise);
-  deps.updateStatus(ctx);
+  updateTelegramPollingStatusSafely(deps.updateStatus, ctx, {
+    recordRuntimeEvent: deps.recordRuntimeEvent,
+  });
 }
 
 export interface TelegramRuntimeEventRecorderPort {
@@ -281,10 +303,15 @@ export function createTelegramPollLoopRunner<
       persistConfig: deps.persistConfig,
       handleUpdate: deps.handleUpdate,
       onErrorStatus: (message) => {
-        deps.updateStatus(ctx, message);
+        updateTelegramPollingStatusSafely(deps.updateStatus, ctx, {
+          message,
+          recordRuntimeEvent: deps.recordRuntimeEvent,
+        });
       },
       onStatusReset: () => {
-        deps.updateStatus(ctx);
+        updateTelegramPollingStatusSafely(deps.updateStatus, ctx, {
+          recordRuntimeEvent: deps.recordRuntimeEvent,
+        });
       },
       sleep,
       maxUpdateFailures: deps.maxUpdateFailures,

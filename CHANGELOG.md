@@ -7,6 +7,65 @@
 - `[Queue]` Extended the no-turn `agent_end` delivery path so attributed async parent follow-ups can reuse the existing Markdown/button delivery path with exact `replyMarkup` preservation.
 - `[Tests]` Added focused async-follow-up regression coverage in `tests/async-notify.test.ts`, `tests/queue.test.ts`, and `tests/runtime.test.ts`.
 
+## 0.11.1: Time Context And Settings Polish
+
+- `[Time Context]` Added optional `telegram.json` `time` prompt context for Telegram-originated turns. `time.injectionMode` values are `off`, `always`, and per-chat `interval`; `time.interval` is stored in milliseconds and timezone comes from the system. The `[time]` line renders last after attachments, handler outputs, and voice context, and Settings exposes a `🕒 Time` mode selector.
+- `[Settings UI]` The proactive push row now uses `📌 Proactive push: on|off`, and proactive push, time, and voice reply submenus use matching emoji headings.
+
+## 0.11.0: Voice Provider Platform
+
+- `[Voice Synthesis Provider API]` Added a first-class voice synthesis provider surface for Telegram voice replies. Providers register with `registerTelegramVoiceSynthesisProvider()` from `@llblab/pi-telegram/lib/voice.ts`, synthesize text into `.ogg`/`.opus`, may return `{ audioPath, transcriptText }`, and can contribute voice-specific prompt guidance through `getVoicePromptContribution(view)`.
+- `[Voice Prompt Context]` Replaced the redundant `[The user sent a voice message.]` prompt marker with compact voice context owned by pi-telegram: `[voice] reply mode: manual`, `[voice] reply mode: mirror`, or `[voice] reply mode: always`. The marker is placed after handler `[outputs]` when present, otherwise after `[attachments]`, and can expand to a `[voice]` list when more fields are added.
+- `[Voice Reply Policy]` Missing or invalid `telegram.json` `voice.replyMode` now resolves to `manual` regardless of provider defaults. Provider UIs can still change policy by writing `voice.replyMode` to the same config file pi-telegram reads.
+- `[Voice Reply Policy]` Added `voice.replyMode` with `manual`, `mirror`, and `always` modes. The bridge tags voice turns, suppresses previews for voice-tagged replies, and transparently converts implicit assistant text to voice when policy asks for it while explicit `<!-- telegram_voice -->` markup still wins.
+- `[Status UI]` Removed extension-section diagnostics from the Telegram status text. Section state belongs on dynamic section button labels and submenus, while `/telegram-status` keeps runtime/transport diagnostics focused.
+- `[Extension Sections]` Main-menu section rows now support a dynamic `getLabel()` function, matching Settings rows, so extensions can surface live state directly on their button labels.
+- `[Prompt Guidance]` Clarified `[voice]` turn context in the Telegram system prompt: `manual` means normal agent-authored output with optional explicit `telegram_voice` markup, `mirror` means voice input prefers voice output, and `always` means replies should stay TTS-friendly for automatic conversion.
+- `[Config Interop]` Added a narrow live config runtime so companion voice sections can update `telegram.json` voice policy and the active pi-telegram config store in one step.
+- `[Voice Delivery]` Restored outbound `type: "voice"` command handlers as the explicit first leg of voice delivery, followed by programmatic handlers and registered voice synthesis providers as zero-config fallbacks, so operator-configured `telegram.json` TTS handlers are never overridden by provider extensions.
+- `[Inbound Handler API]` Added `registerTelegramInboundHandler(kind, handler)` as the generic programmatic counterpart to configured `inboundHandlers`, completing the handler/provider matrix beside `registerTelegramOutboundHandler`, `registerTelegramVoiceTranscriptionProvider`, and `registerTelegramVoiceSynthesisProvider`.
+- `[Voice Transcription Provider API]` Added `registerTelegramVoiceTranscriptionProvider()` for provider-owned STT. Explicit inbound handlers and programmatic inbound handlers still run first; registered STT providers are fallback for voice/audio files without handler output.
+- `[Settings UI]` Added built-in voice reply mode controls to pi-telegram Settings and removed the need for provider extensions to own duplicate reply-policy UI; the selector persists `voice.replyMode` to `telegram.json` even from stale visible menu messages and uses the `👄 Voice reply: hidden|manual|mirror|always` row with lowercase model-style active dots.
+- `[Voice Prompt Context]` Missing or invalid `voice.replyMode` is now surfaced in Settings as `hidden`: it behaves like `manual`, emits no `[voice] reply mode: manual` prompt-context block, and stores no `voice.replyMode`; explicit `manual` keeps the same behavior but renders context. `mirror` mode text-originated turns stay on the manual text path, including support for explicit `telegram_voice` markup.
+- `[Voice Delivery]` Voice delivery now uses Telegram `sendVoice` plus the native `record_voice` chat action. Providers own speech rewriting, TTS, and OGG/Opus conversion; non-OGG provider output fails voice delivery and falls back to the planned text reply.
+- `[Voice Fallbacks]` Voice artifact failures now throw to the queue runtime, which records diagnostics and sends the planned text fallback with outbound markup stripped and reply markup preserved when no text was already delivered.
+- `[Voice Platform Cleanup]` Collapsed merged prototype-only domains: removed shared `globals`, `global-augmentations`, and broad `shutdown` cleanup modules. Voice, section, external-handler, and outbound-handler global registry keys are now owned by their respective domains, and session shutdown no longer clears every extension registry globally.
+- `[Docs]` Added `docs/voice.md` and README coverage for voice modes, provider registration, STT provider fallbacks, caption-style transcripts, native voice format requirements, fallback behavior, and provider-owned settings.
+- `[Tests]` Added voice policy, provider registry, preview suppression, artifact delivery, fallback, OGG/Opus validation, prompt contribution, and entrypoint/invariant regressions. Full validation passes with 575 tests.
+
+## 0.10.8: Compact Typing Timing Hotfix
+
+- `[Compaction]` Telegram `/compact` now starts the native `typing` chat-action keepalive after the "Compaction started" notice is sent, then stops it on completion or failure. Impact: operators see the same Telegram activity indicator during context compression that they already see during normal agent/tool work, without showing `typing` before the explicit start confirmation arrives.
+
+## 0.10.7: Stale Context Hardening Hotfix
+
+- `[Session Reloads]` Context-sensitive command, pairing, queue, session-start, and update-dispatch paths now ignore only stale-session/stale-context failures instead of swallowing broad runtime errors. Impact: the bridge survives ctx replacement/fork/reload races while real bugs still surface for diagnostics.
+- `[Runtime Status]` Restored status update error propagation so existing polling/dispatch safety wrappers can record stale status failures as structured runtime events instead of losing diagnostics inside the status domain.
+- `[Release]` Added a tag-triggered GitHub Actions release workflow that verifies the `vX.Y.Z` tag matches `package.json`, extracts the matching `CHANGELOG.md` section, and publishes a GitHub Release automatically.
+- `[Tests]` Added focused regressions proving the newly guarded call sites tolerate stale context errors and still rethrow unrelated failures.
+
+## 0.10.6: Native Typing Keepalive Hotfix
+
+- `[Typing]` Telegram native `typing` chat actions now refresh every 2.5s instead of every 4s. Impact: the bot's Telegram-side typing animation has more headroom to stay visible during model retries, transient model/API errors, and other long-running agent work.
+- `[Queue Menu]` Empty queue refresh now rotates through a wider set of small status phrases. Impact: repeatedly refreshing an empty queue feels less repetitive while preserving the same callbacks and menu layout.
+- `[Tests]` Added coverage for the default native typing keepalive cadence.
+
+## 0.10.5: Queue Continuity And Input Resilience Hotfix
+
+- `[Compaction]` `/compact` completion and failure callbacks now request deferred queue dispatch instead of dispatching immediately. Impact: queued Telegram turns resume after compaction state and π idle/pending-message state have a chance to settle.
+- `[Text Groups]` Long-text split recovery is more aggressive where Telegram chunking actually drifts: the debounce is rounded to 1s, the conservative 3600-character start threshold is preserved, and continuation messages can span a much wider message-id gap while staying scoped to the same chat/user and non-command text. Impact: very large pasted prompts are more likely to arrive as one agent turn instead of several fragmented turns.
+- `[Runtime Status]` Typing-loop and prompt-dispatch status updates are now best-effort and record stale-context failures as structured runtime events. Impact: status/Running indicators remain resilient after error paths without hiding diagnostics.
+- `[Tests]` Added regressions for deferred compact dispatch, stale status failures in typing/dispatch paths, and many-part split-text grouping.
+
+## 0.10.4: Polling Status Resilience Hotfix
+
+- `[Polling]` Status-bar updates from the polling loop are now best-effort and no longer crash the extension when a captured session context becomes stale after session reload. Failures are recorded as structured polling runtime events with `phase: "status-update"`. Impact: polling cleanup and retry status updates stay resilient without changing the Telegram API, config, or operator workflow.
+- `[Tests]` Added stale-context polling regressions for startup, cleanup, and retry status updates. Impact: the external PR #43 fix is now covered by maintainer-side tests and kept aligned with local style.
+
+## 0.10.3: Dependency Audit Hotfix
+
+- `[Dependencies]` Refreshed the lockfile transitive dependency set to resolve current `protobufjs` / `@protobufjs/utf8` npm audit advisories inherited through development peer installs. Impact: `npm run validate` is green again without changing runtime API or bridge behavior.
+
 ## 0.10.2: Delete Message Port Hotfix
 
 - `[ctx.deleteMessage()]` Added `deleteMessage()` to `TelegramSectionContext` and `TelegramSectionCallbackContext`. Extensions can now delete the message that triggered a callback — useful for cleaning up confirmation dialogs after the user makes a choice.
@@ -113,7 +172,7 @@
 
 ## 0.9.0: Hidden Settings And Proactive Push
 
-- `[Settings Menu]` Added hidden Telegram `/settings` with a proactive push checkbox detail submenu plus `/telegram-settings` in the terminal. Impact: operators can see green/black binary flag state, use green/black/yellow On/Off checkbox controls from Telegram, and toggle the same proactive push flag locally without adding a visible bot-command entry.
+- `[Settings Menu]` Added hidden Telegram `/settings` with a proactive push checkbox detail submenu plus `/telegram-settings` in the terminal. Impact: operators can see green/black binary flag state, use green/black/yellow on/off checkbox controls from Telegram, and toggle the same proactive push flag locally without adding a visible bot-command entry.
 - `[Proactive Push]` `telegram.json` now supports `proactivePush`; when enabled, successful local non-Telegram π final replies are sent to the paired Telegram chat if no Telegram turn is active and the current session still owns the Telegram lock. Local prompt text stays private because the bot does not own or mirror terminal user messages. Impact: long local tasks can notify the phone with result context without leaking from stale bridge owners or failed/aborted turns.
 - `[Queue UI]` Empty queue states now use the bottom-filled `⌛` hourglass while non-empty queue states keep `⏳`. Queue item details now show the selected queue position above the raw prompt preview, preserve reaction-specific priority emoji in the heading, and use side-by-side Priority/Normal tabs that refresh the heading marker immediately. The terminal status bar now stays yellow active while Telegram-owned work still has running tools even if a queued prompt is removed by reaction. Impact: queue emptiness has a small visual easter egg, item submenus stay oriented without changing queue semantics, and queue-removal reactions no longer visually degrade active work to connected.
 - `[Model Menu]` Model rows now open a detail submenu with Back, ☑️ Activate/🟢 Active selection, and yellow/black-marked Scoped/All membership tabs. Impact: model selection remains one tap away while scoped model membership can be managed from Telegram.

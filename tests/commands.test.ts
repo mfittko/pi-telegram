@@ -600,6 +600,12 @@ test("Command helpers guard and complete compact command flow", async () => {
       events.push("compact");
       complete = callbacks.onComplete;
     },
+    startTypingLoop: () => {
+      events.push("typing:start");
+    },
+    stopTypingLoop: () => {
+      events.push("typing:stop");
+    },
     sendTextReply: async (text) => {
       events.push(`reply:${text}`);
     },
@@ -611,11 +617,68 @@ test("Command helpers guard and complete compact command flow", async () => {
     "status",
     "compact",
     "reply:Compaction started.",
+    "typing:start",
+    "typing:stop",
     "set:false",
     "status",
     "dispatch",
     "reply:Compaction completed.",
   ]);
+});
+
+test("Command helpers defer compact-complete queue dispatch", async () => {
+  const events: string[] = [];
+  let complete: (() => void) | undefined;
+  let deferredDispatch: (() => void) | undefined;
+  await handleTelegramCompactCommand({
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    hasActiveTelegramTurn: () => false,
+    hasDispatchPending: () => false,
+    hasQueuedTelegramItems: () => false,
+    isCompactionInProgress: () => false,
+    setCompactionInProgress: (inProgress) => {
+      events.push(`set:${inProgress}`);
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    dispatchNextQueuedTelegramTurn: () => {
+      events.push("dispatch");
+    },
+    requestDeferredDispatchNextQueuedTelegramTurn: (dispatch) => {
+      events.push("defer");
+      deferredDispatch = dispatch;
+    },
+    compact: (callbacks) => {
+      events.push("compact");
+      complete = callbacks.onComplete;
+    },
+    startTypingLoop: () => {
+      events.push("typing:start");
+    },
+    stopTypingLoop: () => {
+      events.push("typing:stop");
+    },
+    sendTextReply: async (text) => {
+      events.push(`reply:${text}`);
+    },
+  });
+  complete?.();
+  assert.deepEqual(events, [
+    "set:true",
+    "status",
+    "compact",
+    "reply:Compaction started.",
+    "typing:start",
+    "typing:stop",
+    "set:false",
+    "status",
+    "defer",
+    "reply:Compaction completed.",
+  ]);
+  deferredDispatch?.();
+  assert.deepEqual(events.at(-1), "dispatch");
 });
 
 test("Command helpers report compact errors", async () => {
@@ -645,6 +708,12 @@ test("Command helpers report compact errors", async () => {
       events.push("compact");
       fail = callbacks.onError;
     },
+    startTypingLoop: () => {
+      events.push("typing:start");
+    },
+    stopTypingLoop: () => {
+      events.push("typing:stop");
+    },
     sendTextReply: async (text) => {
       events.push(`reply:${text}`);
     },
@@ -668,6 +737,12 @@ test("Command helpers report compact errors", async () => {
     compact: () => {
       throw new Error("sync boom");
     },
+    startTypingLoop: () => {
+      events.push("throw-typing:start");
+    },
+    stopTypingLoop: () => {
+      events.push("throw-typing:stop");
+    },
     sendTextReply: async (text) => {
       events.push(`reply:${text}`);
     },
@@ -678,6 +753,8 @@ test("Command helpers report compact errors", async () => {
     "status",
     "compact",
     "reply:Compaction started.",
+    "typing:start",
+    "typing:stop",
     "set:false",
     "status",
     "dispatch",
@@ -685,6 +762,7 @@ test("Command helpers report compact errors", async () => {
     "reply:Compaction failed: boom",
     "throw-set:true",
     "throw-status",
+    "throw-typing:stop",
     "throw-set:false",
     "throw-status",
     "event:compact:sync boom",
@@ -707,6 +785,25 @@ test("Command helpers execute status and model controls immediately", async () =
     },
   });
   assert.deepEqual(events, ["show:ctx", "model:ctx"]);
+});
+
+test("Command menu controls swallow only stale context errors", async () => {
+  await handleTelegramStatusCommand({
+    ctx: "ctx",
+    showStatus: async () => {
+      throw new Error("ctx is stale after session reload");
+    },
+  });
+  await assert.rejects(
+    () =>
+      handleTelegramModelCommand({
+        ctx: "ctx",
+        openModelMenu: async () => {
+          throw new Error("menu broke");
+        },
+      }),
+    /menu broke/,
+  );
 });
 
 test("Command helpers build the unified app menu from commands and status", () => {
@@ -825,6 +922,12 @@ test("Command runtime routes commands through runtime ports", async () => {
       events.push("compact:start");
       compactComplete = callbacks.onComplete;
     },
+    startTypingLoop: (_ctx: { idle: boolean }, chatId?: number) => {
+      events.push(`typing:start:${chatId ?? "default"}`);
+    },
+    stopTypingLoop: () => {
+      events.push("typing:stop");
+    },
     enqueueControlItem: async (
       nextMessage: typeof message,
       _ctx: { idle: boolean },
@@ -898,6 +1001,8 @@ test("Command runtime routes commands through runtime ports", async () => {
     "status",
     "compact:start",
     "reply:99:Compaction started.",
+    "typing:start:42",
+    "typing:stop",
     "compact:false",
     "status",
     "dispatch",

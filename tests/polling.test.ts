@@ -132,6 +132,79 @@ test("Polling runtime starts and stops polling through state ports", async () =>
   ]);
 });
 
+test("Polling runtime ignores stale-context status failures during cleanup", async () => {
+  let pollingPromise: Promise<void> | undefined;
+  let pollingController: AbortController | undefined;
+  let statusCalls = 0;
+  const runtimeEvents: string[] = [];
+  const deps = {
+    hasBotToken: () => true,
+    getPollingPromise: () => pollingPromise,
+    setPollingPromise: (promise: Promise<void> | undefined) => {
+      pollingPromise = promise;
+    },
+    getPollingController: () => pollingController,
+    setPollingController: (controller: AbortController | undefined) => {
+      pollingController = controller;
+    },
+    stopTypingLoop: () => {},
+    runPollLoop: async () => {},
+    updateStatus: () => {
+      statusCalls += 1;
+      if (statusCalls > 1) throw new Error("stale ctx");
+    },
+    recordRuntimeEvent: (
+      category: string,
+      error: unknown,
+      details?: Record<string, unknown>,
+    ) => {
+      const message = error instanceof Error ? error.message : String(error);
+      runtimeEvents.push(`${category}:${message}:${details?.phase}`);
+    },
+  };
+  startTelegramPollingRuntime("ctx", deps);
+  await pollingPromise;
+  assert.equal(statusCalls, 2);
+  assert.equal(pollingPromise, undefined);
+  assert.equal(pollingController, undefined);
+  assert.deepEqual(runtimeEvents, ["polling:stale ctx:status-update"]);
+});
+
+test("Polling runtime ignores stale-context status failures during start", () => {
+  let pollingPromise: Promise<void> | undefined;
+  let pollingController: AbortController | undefined;
+  const runtimeEvents: string[] = [];
+  const deps = {
+    hasBotToken: () => true,
+    getPollingPromise: () => pollingPromise,
+    setPollingPromise: (promise: Promise<void> | undefined) => {
+      pollingPromise = promise;
+    },
+    getPollingController: () => pollingController,
+    setPollingController: (controller: AbortController | undefined) => {
+      pollingController = controller;
+    },
+    stopTypingLoop: () => {},
+    runPollLoop: async () => {},
+    updateStatus: () => {
+      throw new Error("stale ctx");
+    },
+    recordRuntimeEvent: (
+      category: string,
+      error: unknown,
+      details?: Record<string, unknown>,
+    ) => {
+      const message = error instanceof Error ? error.message : String(error);
+      runtimeEvents.push(`${category}:${message}:${details?.phase}`);
+    },
+  };
+
+  assert.doesNotThrow(() => startTelegramPollingRuntime("ctx", deps));
+  assert.equal(!!pollingPromise, true);
+  assert.equal(!!pollingController, true);
+  assert.deepEqual(runtimeEvents, ["polling:stale ctx:status-update"]);
+});
+
 test("Polling controller owns polling promise and abort-controller state", async () => {
   const events: string[] = [];
   let finishPollLoop: (() => void) | undefined;
@@ -251,6 +324,42 @@ test("Poll loop runner binds config, status, and transport ports", async () => {
   });
   await runPollLoop("ctx", new AbortController().signal);
   assert.deepEqual(events, ["deleteWebhook", "handle:ctx:6", "persist:6"]);
+});
+
+test("Poll loop runner ignores stale-context status failures while retrying", async () => {
+  const config = { botToken: "123:abc", lastUpdateId: 1 };
+  const events: string[] = [];
+  const runtimeEvents: string[] = [];
+  let calls = 0;
+  const runPollLoop = createTelegramPollLoopRunner({
+    getConfig: () => config,
+    deleteWebhook: async () => {},
+    getUpdates: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("network down");
+      throw new DOMException("stop", "AbortError");
+    },
+    persistConfig: async () => {},
+    handleUpdate: async () => {},
+    updateStatus: (_ctx: string, message?: string) => {
+      events.push(`status:${message ?? "ok"}`);
+      throw new Error("stale ctx");
+    },
+    sleep: async (ms) => {
+      events.push(`sleep:${ms}`);
+    },
+    recordRuntimeEvent: (category, error, details) => {
+      const message = error instanceof Error ? error.message : String(error);
+      runtimeEvents.push(`${category}:${message}:${details?.phase}`);
+    },
+  });
+  await runPollLoop("ctx", new AbortController().signal);
+  assert.deepEqual(events, ["status:network down", "sleep:3000", "status:ok"]);
+  assert.deepEqual(runtimeEvents, [
+    "polling:network down:loop",
+    "polling:stale ctx:status-update",
+    "polling:stale ctx:status-update",
+  ]);
 });
 
 test("Poll loop initializes lastUpdateId and processes updates", async () => {

@@ -287,11 +287,11 @@ export function createTelegramLockedPollingRuntime<
       .catch((error) =>
         deps.recordRuntimeEvent?.("lock", error, { phase: "ownership-loss" }),
       );
-    ownershipStop = Promise.allSettled([cleanupPromise, stopPromise]).finally(
-      () => {
+    ownershipStop = Promise.allSettled([cleanupPromise, stopPromise])
+      .then(() => undefined)
+      .finally(() => {
         ownershipStop = undefined;
-      },
-    );
+      });
   };
   const startOwnershipWatcher = (ctx: TContext) => {
     const owner = snapshotLockContext(ctx);

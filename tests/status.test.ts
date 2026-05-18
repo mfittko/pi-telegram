@@ -132,6 +132,43 @@ test("Status runtime updates the status bar and exposes bridge lines", () => {
   ]);
 });
 
+test("Status runtime propagates status update failures to safety wrappers", () => {
+  const runtime = createTelegramStatusRuntime({
+    getStatusBarState: () => ({
+      hasBotToken: true,
+      pollingActive: true,
+      paired: true,
+      compactionInProgress: false,
+      processing: false,
+      queuedStatus: "",
+    }),
+    getBridgeStatusLineState: () => ({
+      botUsername: undefined,
+      allowedUserId: undefined,
+      pollingActive: false,
+      lastUpdateId: undefined,
+      pendingDispatch: false,
+      compactionInProgress: false,
+      activeToolExecutions: 0,
+      pendingModelSwitch: false,
+      queuedItems: [],
+      recentRuntimeEvents: [],
+    }),
+  });
+  assert.throws(
+    () =>
+      runtime.updateStatus({
+        ui: {
+          theme: { fg: (_token: string, text: string) => text },
+          setStatus: () => {
+            throw new Error("ctx is stale after session reload");
+          },
+        },
+      }),
+    /stale after session/,
+  );
+});
+
 test("Status bar processing labels prefer the most specific live state", () => {
   assert.equal(
     getTelegramStatusBarProcessingStatus({

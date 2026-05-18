@@ -292,25 +292,11 @@ test("Async notify removes stale event listeners before rebinding", () => {
     handleStarted() {},
     handleCompleted() {},
     handleControl() {},
-    peekPendingFollowupTarget() {
-      return undefined;
-    },
-    consumePendingFollowupTarget() {
-      return undefined;
-    },
-    clear() {},
   });
   bindTelegramAsyncFollowupEvents(eventBus, {
     handleStarted() {},
     handleCompleted() {},
     handleControl() {},
-    peekPendingFollowupTarget() {
-      return undefined;
-    },
-    consumePendingFollowupTarget() {
-      return undefined;
-    },
-    clear() {},
   });
 
   assert.equal(unsubscribed, 3);
@@ -345,25 +331,11 @@ test("Async notify keeps listeners for distinct event buses isolated", () => {
     handleStarted() {},
     handleCompleted() {},
     handleControl() {},
-    peekPendingFollowupTarget() {
-      return undefined;
-    },
-    consumePendingFollowupTarget() {
-      return undefined;
-    },
-    clear() {},
   });
   bindTelegramAsyncFollowupEvents(secondBus, {
     handleStarted() {},
     handleCompleted() {},
     handleControl() {},
-    peekPendingFollowupTarget() {
-      return undefined;
-    },
-    consumePendingFollowupTarget() {
-      return undefined;
-    },
-    clear() {},
   });
 
   assert.equal(firstBusUnsubscribed, 0);

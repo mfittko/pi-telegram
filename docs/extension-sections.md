@@ -47,6 +47,7 @@ export default function (pi: ExtensionAPI) {
     id: "@llblab/pi-telegram-extension-demo",
     label: "🧪 Demo submenu",
     order: 10,
+    getLabel: () => `${flag ? "🟢" : "⚫️"} Demo submenu`,
     render: async (ctx) => ({
       text: "<b>Demo</b>",
       parseMode: "html",
@@ -88,6 +89,7 @@ interface TelegramSectionRegistration {
   id: TelegramSectionId;
   label: string;
   order?: number;
+  getLabel?: () => string;
   render: (
     ctx: TelegramSectionContext,
   ) => TelegramSectionView | Promise<TelegramSectionView>;
@@ -137,7 +139,7 @@ import { registerTelegramSection } from "../pi-telegram/lib/extension-sections.t
 
 **Load order:** `pi-telegram` must load first (sets the global registry). Demo/consumer extensions load second (call `registerTelegramSection`). Pi's normal extension loader guarantees this when `pi-telegram` is listed first.
 
-**Shutdown:** Call `pi.on("shutdown", () => unregister())` to clean up. The registry is cleared on `pi-telegram` unload.
+**Shutdown:** Call `pi.on("shutdown", () => unregister())` to clean up your section. `pi-telegram` owns the registry for its loaded session, but it does not globally wipe extension registries on every `session_shutdown`.
 
 ## 6. Menu Integration
 
@@ -145,13 +147,13 @@ Sections appear in two locations:
 
 ### Main menu
 
-Section rows are injected **before the ⚙️ Settings row**. Ordered by `order` (lower first), then `id` alphabetically.
+Section rows are injected **before the ⚙️ Settings row**. Ordered by `order` (lower first), then `id` alphabetically. The top-level `getLabel()` function (if present) is called on every render to produce a dynamic main-menu label — use it for extension status indicators.
 
 ```
 🤖 Model: anthropic/claude-sonnet-4-5
 🧠 Thinking: off
 ⌛ Queue: 0
-🧪 Demo submenu          ← extension section
+🟢 Demo submenu          ← extension section (dynamic label)
 ⚙️ Settings
 ```
 
@@ -396,7 +398,7 @@ interface TelegramSectionDiagnostic {
 }
 ```
 
-Available through `pi-telegram`'s `/telegram-status` or programmatically via `getTelegramSectionDiagnostics()`.
+Available programmatically via `getTelegramSectionDiagnostics()`. Section runtime state is not shown in Telegram status text; sections should surface user-facing state through dynamic button labels and their own submenus.
 
 ## 13. Purpose and Non-Goals
 
