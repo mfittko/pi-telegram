@@ -759,6 +759,50 @@ test("Update runtime can execute directly from raw updates", async () => {
   ]);
 });
 
+test("Update runtime swallows only stale context execution errors", async () => {
+  const baseDeps = {
+    ctx: TEST_CONTEXT,
+    removePendingMediaGroupMessages: () => {},
+    removeQueuedTelegramTurnsByMessageIds: () => 0,
+    handleAuthorizedTelegramReactionUpdate: async () => {},
+    pairTelegramUserIfNeeded: async () => false,
+    answerCallbackQuery: async () => {},
+    answerGuestQuery: async () => {},
+    handleAuthorizedTelegramCallbackQuery: async () => {},
+    sendTextReply: async () => undefined,
+    handleAuthorizedTelegramEditedMessage: async () => {},
+  };
+  const plan = {
+    kind: "message" as const,
+    message: {
+      chat: { id: 10, type: "private" as const },
+      message_id: 20,
+      from: { id: 7, is_bot: false },
+    },
+    shouldPair: false,
+    shouldNotifyPaired: false,
+    shouldDeny: false,
+  };
+  await assert.doesNotReject(() =>
+    executeTelegramUpdatePlan(plan, {
+      ...baseDeps,
+      handleAuthorizedTelegramMessage: async () => {
+        throw new Error("ctx is stale after session reload");
+      },
+    }),
+  );
+  await assert.rejects(
+    () =>
+      executeTelegramUpdatePlan(plan, {
+        ...baseDeps,
+        handleAuthorizedTelegramMessage: async () => {
+          throw new Error("message handler broke");
+        },
+      }),
+    /message handler broke/,
+  );
+});
+
 test("Update runtime routes edited messages without creating normal message turns", async () => {
   const events: string[] = [];
   await executeTelegramUpdate(

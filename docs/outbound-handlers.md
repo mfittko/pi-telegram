@@ -2,21 +2,23 @@
 
 `pi-telegram` maps hidden assistant-authored HTML comments to Telegram-native outbound actions.
 
-This is intentionally prompt-driven: the agent writes normal Markdown plus small hidden top-level blocks, and the bridge performs the transport work after `agent_end`. `telegram_voice` and `telegram_button` are not π tools. Outbound behavior is an emergent result of the assistant prompt, configured command-template handlers, generated artifacts, and reply delivery. That avoids extra agent-side tool calls, avoids fragile parameter plumbing inside the conversation, and minimizes latency because text, voice, and buttons are planned in one standard assistant reply.
+This is intentionally prompt-driven: the agent writes normal Markdown plus small hidden top-level blocks, and the bridge performs the transport work after `agent_end`. `telegram_voice` and `telegram_button` are not π tools. Outbound behavior is an emergent result of the assistant prompt, text command-template handlers, registered voice synthesis providers, generated artifacts, and reply delivery. That avoids extra agent-side tool calls, avoids fragile parameter plumbing inside the conversation, and minimizes latency because text, voice, and buttons are planned in one standard assistant reply.
 
-This document is the local outbound adaptation of the portable [Command Template Standard](./command-templates.md).
+Text handlers use the portable [Command Template Standard](./command-templates.md). Programmatic outbound handlers use `registerTelegramOutboundHandler(kind, handler)`. Voice replies can use configured command-template handlers or the provider API described in [Voice Integration](./voice.md).
 
 ## Standard
 
 An outbound handler is selected by `type`. Text replies and assistant markup map to handler types:
 
-| Source | Type | Action |
-| --- | --- | --- |
-| Final text | `text` | Transform before render |
-| `telegram_voice` | `voice` | Generate OGG/Opus |
-| `telegram_button` | Built-in | Attach inline button |
+| Source            | Handler                       | Action                  |
+| ----------------- | ----------------------------- | ----------------------- |
+| Final text        | `outboundHandlers[type=text]` | Transform before render |
+| `telegram_voice`  | Voice pipeline                | OGG/Opus `sendVoice`   |
+| `telegram_button` | Built-in                      | Attach inline button    |
 
-Configured command-template handlers provide `template`. A string is one command; an array is ordered composition. Top-level `args` and `defaults` apply to all composed steps unless a step defines private values. The command-template default timeout applies automatically. `output` selects the primary artifact path when the handler produces a file instead of stdout text. Legacy configs may still use `pipe`, but `template: [...]` is the preferred standard shape.
+The voice pipeline is detailed below: configured `type: "voice"` handlers first, then programmatic handlers, then registered synthesis providers.
+
+Configured text handlers provide `template`. A string is one command; an array is ordered composition. Top-level `args` and `defaults` apply to all composed steps unless a step defines private values. The command-template default timeout applies automatically. Legacy configs may still use `pipe`, but `template: [...]` is the preferred standard shape.
 
 ## Text Handler Config
 
@@ -52,27 +54,30 @@ Stdin-based or subagent-backed translation can omit `{text}` from the template b
 
 A text handler should preserve the full message unless shortening is intentional; for translation prompts, explicitly ask the tool to keep Markdown, line breaks, and details unchanged.
 
-## Voice Handler Config
+## Voice Delivery Priority
 
-`telegram.json` may define `outboundHandlers`:
+Voice replies use one fallback pipeline:
 
-```json
-{
-  "outboundHandlers": [
-    {
-      "type": "voice",
-      "template": [
-        "/path/to/translate-stdin --lang {lang=ru}",
-        "/path/to/tts-from-stdin --lang {lang=ru} --rate {rate=+30%} --write-media {mp3}",
-        "ffmpeg -y -i {mp3} -c:a libopus -b:a 32k -ar 16000 -ac 1 -vbr on {ogg}"
-      ],
-      "output": "ogg"
-    }
-  ]
-}
+1. configured `outboundHandlers` with `type: "voice"` in `telegram.json` order
+2. programmatic `registerTelegramOutboundHandler("voice", ...)` handlers
+3. registered voice synthesis providers from `@llblab/pi-telegram/lib/voice.ts`
+
+This makes provider extensions a zero-config convenience without overriding explicit operator-owned `telegram.json` handlers. If several synthesis providers are registered, they are tried in registration order; the first provider that returns a valid `.ogg`/`.opus` artifact handles the reply. Returning `undefined` passes to the next provider, while thrown errors or invalid files are recorded before the next fallback is tried.
+
+## Voice Synthesis Provider API
+
+Voice replies can be delivered by synthesis providers registered through `@llblab/pi-telegram/lib/voice.ts`:
+
+```ts
+import { registerTelegramVoiceSynthesisProvider } from "@llblab/pi-telegram/lib/voice.ts";
+
+const dispose = registerTelegramVoiceSynthesisProvider(async (text, options) => {
+  const audioPath = await synthesizeToOggOpus(text, options);
+  return { audioPath, transcriptText: text };
+});
 ```
 
-In this example, the first step receives the `telegram_voice` text on stdin and returns translated text; the second step reads that translated text from stdin and writes `{mp3}`; the final step converts `{mp3}` to Telegram-ready `{ogg}`. If you do not need voice translation, omit the first step and call a TTS command that accepts `{text}` directly. If a matching voice handler fails, the bridge tries the next matching `type: "voice"` handler.
+Synthesis providers receive the extracted `telegram_voice` text plus optional `lang`/`rate` hints. They own translation, TTS, speech rewriting, transcript choice, and OGG/Opus conversion. The bridge validates that the returned file ends in `.ogg` or `.opus`, sends it through Telegram `sendVoice`, and falls back to planned text if delivery fails before any visible text was delivered. Providers run after configured and programmatic voice handlers in the priority chain above.
 
 ## Voice Markup
 
@@ -90,29 +95,7 @@ Text to synthesize as a Telegram voice message.
 <!-- telegram_voice: Short spoken companion summary. -->
 ```
 
-The bridge strips the comment from Telegram text. On `agent_end`, it maps each `telegram_voice` block to `type: "voice"`, generates one file per block, and sends each file as an independent Telegram-native voice message. The opening `<!-- telegram_voice` marker must start at column zero on a top-level line outside fenced code, quotes, and lists; otherwise it is rendered as literal Markdown. Body-form comments leave the opening line unclosed until the body-ending `-->`; closed heads can use `text="..."` for explicit one-line spoken text.
-
-## Built-In Voice Placeholders
-
-Voice outbound handlers receive these runtime placeholders:
-
-| Placeholder | Value |
-| --- | --- |
-| `{text}` | Voice text from body, attr, or colon form |
-| `{lang}` | Optional override, e.g. `lang=ru` |
-| `{rate}` | Optional override, e.g. `rate=+30%` |
-| `{mp3}` | Temp MP3 path under agent temp |
-| `{ogg}` | Temp OGG path under agent temp |
-
-Temp artifacts use unique flat names such as `<uuid>-voice.mp3` and `<uuid>-voice.ogg`. The bridge does not create per-handler directory trees.
-
-## Output
-
-For composed handlers, `output` selects the primary artifact after the composition completes. Omitted `output` means `"stdout"`, so the final step should print the generated OGG/Opus path. `"output": "ogg"` means the generated file path comes from `{ogg}`. A value such as `"{ogg}"` is equivalent. Composition also follows the command-template standard where each step's stdout is provided as stdin to the next step by default.
-
-For one-step `template` handlers, stdout remains the default result channel: the command should print the generated OGG/Opus path.
-
-**Critical steps:** voice synthesis is often a multi-step transform → TTS → conversion pipeline. The final audio conversion step is inherently critical — if it fails, the voice output is invalid. Mark conversion steps as `"critical": true` when a composed handler must abort after conversion failure instead of continuing to later non-critical steps. Use multiple matching `type: "voice"` handlers when you need provider or command fallbacks. See [Command Template Standard](./command-templates.md) for semantics.
+The bridge strips the comment from Telegram text. On `agent_end`, it maps each `telegram_voice` block to a provider call, generates one file per block, and sends each file as an independent Telegram-native voice message. The opening `<!-- telegram_voice` marker must start at column zero on a top-level line outside fenced code, quotes, and lists; otherwise it is rendered as literal Markdown. Body-form comments leave the opening line unclosed until the body-ending `-->`; closed heads can use `text="..."` for explicit one-line spoken text.
 
 ## Buttons Markup
 
@@ -149,6 +132,6 @@ The extension injects Telegram-specific system prompt guidance so agents know th
 - Write the full technical answer as normal Markdown.
 - Add `telegram_voice` when a Telegram-native voice message is useful; use body text, `text="..."`, or colon shorthand for the text to synthesize. A companion summary is optional, no specific summary format is required.
 - Add `telegram_button: ...` when label equals prompt, `telegram_button label="..." prompt="..."` for one-line prompts, or `telegram_button label="..."` with a body for multiline prompts. If the reply contains only button/voice comment blocks, add a short visible marker (for example `Choose one:`) before them so Telegram always has a visible parent message for attachment.
-- Do not call or register TTS/text-to-OGG/Telegram transport tools for voice or buttons; the bridge owns the configured outbound-handler pipeline and delivery.
+- Do not call Telegram transport tools for voice or buttons; the bridge owns delivery, while registered voice synthesis providers own TTS and OGG/Opus conversion.
 
 This keeps the agent focused on semantics and lets the bridge handle low-latency Telegram adaptation.

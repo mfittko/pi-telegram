@@ -155,10 +155,9 @@ export function createTelegramExternalHandleUpdate<TUpdate, TContext>(
  * off();
  * ```
  *
- * Extensions that prefer zero coupling can also reach the registry directly
- * via `globalThis.__piTelegramExternalHandlerRegistry__` (versioned object,
- * see {@link TelegramExternalHandlerRegistry}). This avoids importing
- * `@llblab/pi-telegram` and tolerates either install order.
+ * Extensions that prefer zero coupling can also reach the versioned registry
+ * directly on `globalThis`. This avoids importing `@llblab/pi-telegram` and
+ * tolerates either install order.
  */
 export function onTelegramExternalUpdate(
   handler: TelegramExternalHandler,

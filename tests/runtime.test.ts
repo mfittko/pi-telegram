@@ -469,6 +469,40 @@ test("Prompt dispatch lifecycle owns dispatch flags, typing, and status", () => 
   ]);
 });
 
+test("Prompt dispatch lifecycle records stale status failures", () => {
+  const runtime = Runtime.createTelegramBridgeRuntime();
+  const events: string[] = [];
+  const lifecycle = Runtime.createTelegramPromptDispatchLifecycle<{
+    id: string;
+  }>({
+    lifecycle: runtime.lifecycle,
+    typing: runtime.typing,
+    startTypingLoop: () => {
+      events.push("typing");
+    },
+    updateStatus: () => {
+      throw new Error("stale ctx");
+    },
+    recordRuntimeEvent: (category, error, details) => {
+      const message = error instanceof Error ? error.message : String(error);
+      events.push(`${category}:${message}:${details?.phase ?? "event"}`);
+    },
+  });
+
+  assert.doesNotThrow(() => lifecycle.onPromptDispatchStart({ id: "ctx" }));
+  assert.equal(runtime.lifecycle.hasDispatchPending(), true);
+  assert.doesNotThrow(() =>
+    lifecycle.onPromptDispatchFailure({ id: "ctx" }, "boom"),
+  );
+  assert.equal(runtime.lifecycle.hasDispatchPending(), false);
+  assert.deepEqual(events, [
+    "typing",
+    "dispatch:stale ctx:status-update",
+    "dispatch:boom:event",
+    "dispatch:stale ctx:status-update",
+  ]);
+});
+
 test("Prompt dispatch runtime binds typing starter and dispatch lifecycle", async () => {
   const runtime = Runtime.createTelegramBridgeRuntime();
   const sentChatIds: number[] = [];
@@ -494,6 +528,28 @@ test("Prompt dispatch runtime binds typing starter and dispatch lifecycle", asyn
   promptRuntime.onPromptDispatchFailure({ id: "ctx" }, "boom");
   assert.equal(runtime.lifecycle.hasDispatchPending(), false);
   assert.deepEqual(statuses, ["ok", "dispatch failed: boom"]);
+});
+
+test("Typing loop starter uses a conservative native keepalive interval", () => {
+  let capturedIntervalMs = 0;
+  const startTypingLoop = Runtime.createTelegramTypingLoopStarter<{
+    id: string;
+  }>({
+    typing: {
+      start: (deps) => {
+        capturedIntervalMs = deps.intervalMs;
+        return true;
+      },
+      stop: () => true,
+    },
+    getDefaultChatId: () => 7,
+    sendTypingAction: async () => {},
+    updateStatus: () => {},
+  });
+
+  startTypingLoop({ id: "ctx" });
+
+  assert.equal(capturedIntervalMs, 2500);
 });
 
 test("Typing loop starter binds default chat and reports failures", async () => {
@@ -546,6 +602,40 @@ test("Typing loop starter binds default chat and reports failures", async () => 
   await flushMicrotasks();
   assert.deepEqual(failingStatusErrors, ["boom"]);
   assert.deepEqual(runtimeEvents, ["typing:boom:8"]);
+  assert.equal(runtime.typing.stop(), true);
+});
+
+test("Typing loop starter records stale status failures", async () => {
+  const state = Runtime.createTelegramBridgeRuntimeState();
+  const runtime = Runtime.createTelegramBridgeRuntime(state);
+  const runtimeEvents: string[] = [];
+  const startTypingLoop = Runtime.createTelegramTypingLoopStarter<{
+    id: string;
+  }>({
+    typing: runtime.typing,
+    getDefaultChatId: () => undefined,
+    sendTypingAction: async () => {
+      throw new Error("typing failed");
+    },
+    updateStatus: () => {
+      throw new Error("stale ctx");
+    },
+    recordRuntimeEvent: (category, error, details) => {
+      const message = error instanceof Error ? error.message : String(error);
+      runtimeEvents.push(
+        `${category}:${message}:${details?.phase ?? details?.chatId}`,
+      );
+    },
+    intervalMs: 1000,
+  });
+
+  startTypingLoop({ id: "ctx" }, 8);
+  await flushMicrotasks();
+
+  assert.deepEqual(runtimeEvents, [
+    "typing:stale ctx:status-update",
+    "typing:typing failed:8",
+  ]);
   assert.equal(runtime.typing.stop(), true);
 });
 
@@ -1130,7 +1220,7 @@ test("Extension runtime handles immediate status before queued prompt after agen
     );
     await waitForCondition(() => runtimeEvents.length >= 3);
     assert.equal(runtimeEvents[0], "dispatch:[telegram] first request");
-    assert.match(runtimeEvents[1] ?? "", /^send:<b>π Telegram bridge<\/b>/);
+    assert.match(runtimeEvents[1] ?? "", /^send:<b>π Telegram<\/b>/);
     assert.equal(
       runtimeEvents[2],
       "dispatch:[telegram] follow up after status",
@@ -1327,6 +1417,10 @@ test("Extension runtime keeps queued turns blocked until compaction completes", 
         message_id: 100 + runtimeEvents.length,
       });
     }
+    if (method === "sendChatAction") {
+      runtimeEvents.push(`typing:${String(body?.chat_id ?? "")}:${String(body?.action ?? "")}`);
+      return createRuntimeTelegramApiResponse(true);
+    }
     throw new Error(`Unexpected Telegram API method: ${method}`);
   });
   try {
@@ -1348,7 +1442,15 @@ test("Extension runtime keeps queued turns blocked until compaction completes", 
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("telegram-connect")?.handler("", ctx);
     await waitForCondition(() => runtimeEvents.includes("compact:start"));
-    assert.equal(runtimeEvents.includes("send:Compaction started."), true);
+    await waitForCondition(() =>
+      runtimeEvents.includes("send:Compaction started.") &&
+      runtimeEvents.includes("typing:99:typing"),
+    );
+    assert.equal(
+      runtimeEvents.indexOf("send:Compaction started.") <
+        runtimeEvents.indexOf("typing:99:typing"),
+      true,
+    );
     secondUpdates.resolve(
       createRuntimeTelegramApiResponse([
         {
@@ -1508,7 +1610,8 @@ test("Extension runtime coalesces likely split long text updates into one dispat
     const ctx = createRuntimeExtensionContext();
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("telegram-connect")?.handler("", ctx);
-    await waitForEventLoopCondition(() => getUpdatesCalls >= 2, 5000);
+    await waitForEventLoopCondition(() => getUpdatesCalls >= 1, 5000);
+    await flushMicrotasks();
     assert.equal(runtimeEvents.length, 0);
     await waitForCondition(() => runtimeEvents.length === 1, 3000);
     assert.equal(
@@ -1856,7 +1959,7 @@ test("Extension runtime applies idle model picks immediately and refreshes statu
     assert.equal(
       runtimeEvents.some(
         (event) =>
-          event.startsWith("edit:<b>π Telegram bridge</b>") ||
+          event.startsWith("edit:<b>π Telegram</b>") ||
           event.startsWith("edit:<b>🤖 Choose a model:</b>"),
       ),
       true,

@@ -4,6 +4,8 @@
  * Owns queue item contracts, lane admission, pure queue mutations, and dispatch planning
  */
 
+import { isVoiceTurn } from "./voice.ts";
+
 // --- Queue Items ---
 
 export interface QueuedAttachment {
@@ -80,6 +82,11 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
   content: TelegramPromptContent[];
   historyText: string;
   priorityEmoji?: string;
+
+  /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */
+  voiceReplyPreferred?: boolean;
+  /** Turn must be delivered as voice (voice mode) */
+  voiceReplyRequired?: boolean;
 }
 
 export interface PendingTelegramControlItem<
@@ -369,6 +376,24 @@ export function formatQueuedTelegramItemsStatus<TContext = unknown>(
   items: TelegramQueueItem<TContext>[],
 ): string {
   return items.length === 0 ? "" : ` +${items.length}`;
+}
+
+export function truncateTelegramQueueSummary(
+  text: string,
+  maxWords = 5,
+  maxLength = 40,
+): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const words = normalized.split(" ");
+  let summary = words.slice(0, maxWords).join(" ");
+  if (summary.length === 0) summary = normalized;
+  if (summary.length > maxLength) {
+    summary = summary.slice(0, maxLength).trimEnd();
+  }
+  return summary.length < normalized.length || words.length > maxWords
+    ? `${summary}…`
+    : summary;
 }
 
 export function canDispatchTelegramTurnState(
@@ -788,7 +813,11 @@ export interface TelegramAgentEndRuntimeDeps<
     text: string,
   ) => Promise<unknown>;
   sendQueuedAttachments: (turn: TTurn) => Promise<void>;
-  answerGuestQuery?: (guestQueryId: string, text?: string, options?: { parseMode?: string }) => Promise<void>;
+  answerGuestQuery?: (
+    guestQueryId: string,
+    text?: string,
+    options?: { parseMode?: string },
+  ) => Promise<void>;
   sendGuestReply?: (guestQueryId: string, markdown: string) => Promise<void>;
   planOutboundReply?: (
     markdown: string,
@@ -1013,9 +1042,32 @@ export async function handleTelegramAgentEndRuntime<
 >(deps: TelegramAgentEndRuntimeDeps<TTurn, TReplyMarkup>): Promise<void> {
   const { turn, assistant } = deps;
   const rawFinalText = assistant.text;
-  const outboundReply = rawFinalText
+  let outboundReply = rawFinalText
     ? deps.planOutboundReply?.(rawFinalText)
     : undefined;
+  // Preserve the planned reply so voice-fallback can use stripped markdown + replyMarkup
+  const plannedReply = outboundReply;
+
+  // Transparent voice interception: when the turn is voice-tagged and the agent
+  // did not explicitly use <!-- telegram_voice --> markup, we automatically
+  // convert the whole response to voice.
+  const voiceInterceptionGuard =
+    turn &&
+    isVoiceTurn(turn) &&
+    rawFinalText?.trim() &&
+    deps.planOutboundReply &&
+    (!outboundReply ||
+      (!outboundReply.voiceText && !outboundReply.voiceReplies?.length));
+  if (voiceInterceptionGuard) {
+    const voiceText =
+      plannedReply !== undefined
+        ? plannedReply.markdown?.trim() || ""
+        : (rawFinalText ?? "");
+    outboundReply = outboundReply
+      ? { ...outboundReply, voiceText, markdown: "" }
+      : { markdown: "", voiceText };
+  }
+
   const finalText = outboundReply ? outboundReply.markdown : rawFinalText;
   const hasOutboundArtifacts =
     !!outboundReply?.voiceText || !!outboundReply?.voiceReplies?.length;
@@ -1153,9 +1205,36 @@ export async function handleTelegramAgentEndRuntime<
     }
   }
   if (outboundReply && deps.sendOutboundReplyArtifacts) {
-    await deps.sendOutboundReplyArtifacts(turn, outboundReply, {
-      replyToPrompt: !finalText,
-    });
+    try {
+      await deps.sendOutboundReplyArtifacts(turn, outboundReply, {
+        replyToPrompt: !finalText,
+      });
+    } catch (error) {
+      deps.recordRuntimeEvent?.("delivery", error, {
+        phase: "voice-artifacts",
+        chatId: turn.chatId,
+      });
+      // Fallback to planned text when voice delivery fails and text wasn't already delivered
+      if (rawFinalText?.trim() && !finalText && hasOutboundArtifacts) {
+        try {
+          const fallbackMarkdown =
+            plannedReply?.markdown || outboundReply?.voiceText || rawFinalText;
+          await deps.sendMarkdownReply(
+            turn.chatId,
+            turn.replyToMessageId,
+            fallbackMarkdown,
+            plannedReply?.replyMarkup
+              ? { replyMarkup: plannedReply.replyMarkup }
+              : undefined,
+          );
+        } catch (fallbackError) {
+          deps.recordRuntimeEvent?.("delivery", fallbackError, {
+            phase: "voice-fallback-text",
+            chatId: turn.chatId,
+          });
+        }
+      }
+    }
   }
   if (endPlan.shouldSendAttachmentNotice) {
     await deps.sendTextReply(
@@ -1362,6 +1441,14 @@ export interface TelegramPromptEnqueueController<TMessage, TContext = unknown> {
   enqueue: (messages: TMessage[], ctx: TContext) => Promise<void>;
 }
 
+function isTelegramStaleContextError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("stale after session") ||
+      error.message.includes("stale ctx"))
+  );
+}
+
 export function buildTelegramSessionStartState<TModel = unknown>(
   currentModel: TModel | undefined,
 ): TelegramSessionStartState<TModel> {
@@ -1399,7 +1486,11 @@ export async function startTelegramSessionRuntime<TContext, TModel = unknown>(
   await deps.loadConfig();
   deps.applyState(buildTelegramSessionStartState(deps.currentModel));
   await deps.prepareTempDir();
-  deps.bindDeferredDispatchContext?.(deps.ctx);
+  try {
+    deps.bindDeferredDispatchContext?.(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
   deps.updateStatus();
 }
 
@@ -1551,7 +1642,11 @@ export function reorderTelegramQueueItemsRuntime<TContext>(
   deps.setQueuedItems(
     [...deps.getQueuedItems()].sort(compareTelegramQueueItems),
   );
-  deps.updateStatus(deps.ctx);
+  try {
+    deps.updateStatus(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
 }
 
 export function clearTelegramQueueItemsRuntime<TContext>(
@@ -1560,7 +1655,11 @@ export function clearTelegramQueueItemsRuntime<TContext>(
   const removedCount = deps.getQueuedItems().length;
   if (removedCount === 0) return 0;
   deps.setQueuedItems([]);
-  deps.updateStatus(deps.ctx);
+  try {
+    deps.updateStatus(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
   return removedCount;
 }
 
@@ -1574,7 +1673,11 @@ export function removeTelegramQueueItemsByMessageIdsRuntime<TContext>(
   );
   if (removedCount === 0) return 0;
   deps.setQueuedItems(items);
-  deps.updateStatus(deps.ctx);
+  try {
+    deps.updateStatus(deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
+  }
   return removedCount;
 }
 

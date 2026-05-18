@@ -11,9 +11,20 @@ import test from "node:test";
 
 import {
   buildTelegramInboundHandlerInvocation,
+  clearTelegramInboundHandlers,
   processTelegramInboundHandlers,
+  registerTelegramInboundHandler,
   telegramInboundHandlerMatchesFile,
 } from "../lib/inbound-handlers.ts";
+import {
+  clearTelegramVoiceTranscriptionProviders,
+  registerTelegramVoiceTranscriptionProvider,
+} from "../lib/voice.ts";
+
+test.beforeEach(() => {
+  clearTelegramInboundHandlers();
+  clearTelegramVoiceTranscriptionProviders();
+});
 
 test("Inbound handlers match MIME wildcards and Telegram file types", () => {
   const voiceFile = {
@@ -476,6 +487,113 @@ test("Inbound handler composition: non-critical failure continues to next step",
   });
   assert.deepEqual(calls, ["scan", "transcribe"]);
   assert.deepEqual(result.handlerOutputs, ["transcribed"]);
+});
+
+test("Programmatic inbound text handlers transform text after configured text handlers", async () => {
+  const dispose = registerTelegramInboundHandler("text", async ({ text }) => `${text} world`);
+  try {
+    const result = await processTelegramInboundHandlers({
+      files: [],
+      rawText: "hello",
+      handlers: [
+        {
+          type: "text",
+          template: "uppercase",
+        },
+      ],
+      cwd: "/work",
+      execCommand: async (_command, _args, options) => ({
+        stdout: String(options?.stdin ?? "").toUpperCase(),
+        stderr: "",
+        code: 0,
+        killed: false,
+      }),
+    });
+    assert.equal(result.rawText, "HELLO world");
+  } finally {
+    dispose();
+  }
+});
+
+test("Programmatic inbound media handlers run before voice transcription providers", async () => {
+  const disposeInbound = registerTelegramInboundHandler("voice", async ({ file }) => ({
+    text: `programmatic transcript for ${file?.fileName}`,
+  }));
+  const disposeProvider = registerTelegramVoiceTranscriptionProvider(
+    async () => "provider transcript",
+  );
+  try {
+    const result = await processTelegramInboundHandlers({
+      files: [
+        {
+          path: "/tmp/programmatic.ogg",
+          fileName: "programmatic.ogg",
+          mimeType: "audio/ogg",
+          kind: "voice",
+        },
+      ],
+      rawText: "",
+      handlers: [],
+      cwd: "/work",
+      execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+    });
+    assert.deepEqual(result.handlerOutputs, [
+      "programmatic transcript for programmatic.ogg",
+    ]);
+    assert.equal(result.handledFiles[0]?.handler.type, "programmatic");
+  } finally {
+    disposeInbound();
+    disposeProvider();
+  }
+});
+
+test("Inbound voice transcription providers handle voice files when no handler matches", async () => {
+  const dispose = registerTelegramVoiceTranscriptionProvider(async (file) => ({
+    text: `provider transcript for ${file.fileName}`,
+  }));
+  try {
+    const result = await processTelegramInboundHandlers({
+      files: [
+        {
+          path: "/tmp/provider.ogg",
+          fileName: "provider.ogg",
+          mimeType: "audio/ogg",
+          kind: "voice",
+        },
+      ],
+      rawText: "",
+      handlers: [],
+      cwd: "/work",
+      execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+    });
+    assert.deepEqual(result.handlerOutputs, [
+      "provider transcript for provider.ogg",
+    ]);
+    assert.equal(result.handledFiles[0]?.handler.type, "voice-provider");
+  } finally {
+    dispose();
+  }
+});
+
+test("Inbound handlers take precedence over voice transcription providers", async () => {
+  const dispose = registerTelegramVoiceTranscriptionProvider(async () => "provider transcript");
+  try {
+    const result = await processTelegramInboundHandlers({
+      files: [{ path: "/tmp/in.ogg", mimeType: "audio/ogg", kind: "voice" }],
+      rawText: "",
+      handlers: [{ type: "voice", template: "transcribe --file {file}" }],
+      cwd: "/work",
+      execCommand: async () => ({
+        stdout: "handler transcript\n",
+        stderr: "",
+        code: 0,
+        killed: false,
+      }),
+    });
+    assert.deepEqual(result.handlerOutputs, ["handler transcript"]);
+  } finally {
+    dispose();
+  }
 });
 
 test("Inbound handler composition: critical failure aborts composition", async () => {

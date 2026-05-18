@@ -746,6 +746,14 @@ export async function handleAuthorizedTelegramReactionUpdate<TContext>(
   );
 }
 
+function isTelegramStaleContextError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("stale after session") ||
+      error.message.includes("stale ctx"))
+  );
+}
+
 export async function executeTelegramUpdatePlan<
   TContext = unknown,
   TReactionUpdate extends TelegramMessageReactionUpdated =
@@ -761,81 +769,85 @@ export async function executeTelegramUpdatePlan<
     TMessage
   >,
 ): Promise<void> {
-  if (plan.kind === "ignore") return;
-  if (plan.kind === "deleted") {
-    deps.removePendingMediaGroupMessages(plan.messageIds);
-    deps.removeQueuedTelegramTurnsByMessageIds(plan.messageIds, deps.ctx);
-    return;
-  }
-  if (plan.kind === "reaction") {
-    await deps.handleAuthorizedTelegramReactionUpdate(
-      plan.reactionUpdate,
-      deps.ctx,
-    );
-    return;
-  }
-  if (plan.kind === "callback") {
-    if (plan.shouldPair) {
-      await deps.pairTelegramUserIfNeeded(plan.query.from.id, deps.ctx);
+  try {
+    if (plan.kind === "ignore") return;
+    if (plan.kind === "deleted") {
+      deps.removePendingMediaGroupMessages(plan.messageIds);
+      deps.removeQueuedTelegramTurnsByMessageIds(plan.messageIds, deps.ctx);
+      return;
+    }
+    if (plan.kind === "reaction") {
+      await deps.handleAuthorizedTelegramReactionUpdate(
+        plan.reactionUpdate,
+        deps.ctx,
+      );
+      return;
+    }
+    if (plan.kind === "callback") {
+      if (plan.shouldPair) {
+        await deps.pairTelegramUserIfNeeded(plan.query.from.id, deps.ctx);
+      }
+      if (plan.shouldDeny) {
+        const callbackQueryId = getTelegramCallbackQueryId(plan.query);
+        if (callbackQueryId) {
+          await deps.answerCallbackQuery(
+            callbackQueryId,
+            "This bot is not authorized for your account.",
+          );
+        }
+        return;
+      }
+      await deps.handleAuthorizedTelegramCallbackQuery(plan.query, deps.ctx);
+      return;
+    }
+    if (plan.kind === "guest") {
+      if (plan.shouldDeny) {
+        await deps.answerGuestQuery(
+          plan.guestMessage.guest_query_id,
+          "Access denied.",
+        );
+        return;
+      }
+      if (deps.handleAuthorizedTelegramGuestMessage) {
+        await deps.handleAuthorizedTelegramGuestMessage(
+          plan.guestMessage,
+          deps.ctx,
+        );
+      }
+      return;
+    }
+    const pairedNow = plan.shouldPair
+      ? await deps.pairTelegramUserIfNeeded(plan.message.from.id, deps.ctx)
+      : false;
+    const replyTarget = getTelegramMessageReplyTarget(plan.message);
+    if (
+      plan.kind === "message" &&
+      pairedNow &&
+      plan.shouldNotifyPaired &&
+      replyTarget
+    ) {
+      await deps.sendTextReply(
+        replyTarget.chatId,
+        replyTarget.messageId,
+        "Telegram bridge paired with this account.",
+      );
     }
     if (plan.shouldDeny) {
-      const callbackQueryId = getTelegramCallbackQueryId(plan.query);
-      if (callbackQueryId) {
-        await deps.answerCallbackQuery(
-          callbackQueryId,
+      if (replyTarget) {
+        await deps.sendTextReply(
+          replyTarget.chatId,
+          replyTarget.messageId,
           "This bot is not authorized for your account.",
         );
       }
       return;
     }
-    await deps.handleAuthorizedTelegramCallbackQuery(plan.query, deps.ctx);
-    return;
-  }
-  if (plan.kind === "guest") {
-    if (plan.shouldDeny) {
-      await deps.answerGuestQuery(
-        plan.guestMessage.guest_query_id,
-        "Access denied.",
-      );
+    if (plan.kind === "edited-message") {
+      await deps.handleAuthorizedTelegramEditedMessage(plan.message, deps.ctx);
       return;
     }
-    if (deps.handleAuthorizedTelegramGuestMessage) {
-      await deps.handleAuthorizedTelegramGuestMessage(
-        plan.guestMessage,
-        deps.ctx,
-      );
-    }
-    return;
+    await deps.handleAuthorizedTelegramMessage(plan.message, deps.ctx);
+  } catch (error) {
+    if (!isTelegramStaleContextError(error)) throw error;
   }
-  const pairedNow = plan.shouldPair
-    ? await deps.pairTelegramUserIfNeeded(plan.message.from.id, deps.ctx)
-    : false;
-  const replyTarget = getTelegramMessageReplyTarget(plan.message);
-  if (
-    plan.kind === "message" &&
-    pairedNow &&
-    plan.shouldNotifyPaired &&
-    replyTarget
-  ) {
-    await deps.sendTextReply(
-      replyTarget.chatId,
-      replyTarget.messageId,
-      "Telegram bridge paired with this account.",
-    );
-  }
-  if (plan.shouldDeny) {
-    if (replyTarget) {
-      await deps.sendTextReply(
-        replyTarget.chatId,
-        replyTarget.messageId,
-        "This bot is not authorized for your account.",
-      );
-    }
-    return;
-  }
-  if (plan.kind === "edited-message") {
-    await deps.handleAuthorizedTelegramEditedMessage(plan.message, deps.ctx);
-    return;
-  }
-  await deps.handleAuthorizedTelegramMessage(plan.message, deps.ctx);
 }

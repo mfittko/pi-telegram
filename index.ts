@@ -12,6 +12,7 @@ import * as Config from "./lib/config.ts";
 import {
   createTelegramExtensionSectionRegistry,
   setGlobalTelegramSectionRegistry,
+  registerTelegramSection,
   type TelegramSectionRegistry,
 } from "./lib/extension-sections.ts";
 import { createTelegramExternalHandleUpdate } from "./lib/external-handlers.ts";
@@ -38,9 +39,49 @@ import * as Runtime from "./lib/runtime.ts";
 import * as Setup from "./lib/setup.ts";
 import * as Status from "./lib/status.ts";
 import * as TextGroups from "./lib/text-groups.ts";
+import * as TimeInjection from "./lib/time-injection.ts";
+import * as Voice from "./lib/voice.ts";
+
+const VOICE_EVENT_RECORDER_KEY = "__piTelegramVoiceEventRecorder__";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 type RuntimeTelegramQueueItem = Queue.TelegramQueueItem<Pi.ExtensionContext>;
+
+export {
+  registerTelegramOutboundHandler,
+  hasTelegramOutboundHandler,
+  getTelegramOutboundProgrammaticHandlers,
+  recordTelegramRuntimeEvent,
+} from "./lib/outbound-handlers.ts";
+
+// --- Voice Integration Exports ---
+// Prefer domain imports from ./lib/voice.ts; root exports stay for compatibility.
+export {
+  registerTelegramVoiceSynthesisProvider,
+  getTelegramVoiceSynthesisProviders,
+  hasTelegramVoiceSynthesisProvider,
+  clearTelegramVoiceSynthesisProviders,
+  planTelegramVoiceReply,
+  getTelegramVoiceReplyMode,
+  computeVoiceTurnFlags,
+  isVoiceTurn,
+  shouldSuppressPreviewForVoice,
+  computeVoicePromptContribution,
+  type TelegramVoiceSynthesisProvider,
+  type TelegramVoiceTurnView,
+  type TelegramVoiceSynthesisProviderResult,
+  type TelegramVoiceReplyMode,
+} from "./lib/voice.ts";
+
+// --- Extension Section Exports ---
+export {
+  registerTelegramSection,
+  type TelegramSectionRegistration,
+  type TelegramSectionContext,
+  type TelegramSectionCallbackContext,
+  type TelegramSectionView,
+  type TelegramSectionSettingsRegistration,
+} from "./lib/extension-sections.ts";
 
 // --- Extension Runtime ---
 
@@ -57,10 +98,28 @@ export default function (pi: Pi.ExtensionAPI) {
   const bridgeRuntime = Runtime.createTelegramBridgeRuntime();
   const { abort, lifecycle, queue, setup, typing } = bridgeRuntime;
   const configStore = Config.createTelegramConfigStore();
+  Config.setGlobalTelegramConfigRuntime({
+    updateVoiceConfig(voice) {
+      const current = configStore.get();
+      const next = { ...current, voice: { ...(current.voice ?? {}), ...voice } };
+      configStore.set(next);
+      void configStore.persist(next);
+    },
+  });
   const isProactivePushEnabled =
     Config.createTelegramProactivePushChecker(configStore);
   const setProactivePushEnabled =
     Config.createTelegramProactivePushSetter(configStore);
+  const getVoiceReplyMode =
+    Config.createTelegramVoiceReplyModeGetter(configStore);
+  const isVoiceReplyModeConfigured =
+    Config.createTelegramVoiceReplyModeConfiguredChecker(configStore);
+  const setVoiceReplyMode =
+    Config.createTelegramVoiceReplyModeSetter(configStore);
+  const getTimeInjectionMode =
+    Config.createTelegramTimeInjectionModeGetter(configStore);
+  const setTimeInjectionMode =
+    Config.createTelegramTimeInjectionModeSetter(configStore);
   const lockRuntime = Locks.createTelegramLockRuntime<Pi.ExtensionContext>();
   const lockOwnershipGuard =
     Locks.createTelegramLockOwnershipGuard(lockRuntime);
@@ -83,10 +142,19 @@ export default function (pi: Pi.ExtensionAPI) {
   const sectionRegistry: TelegramSectionRegistry =
     createTelegramExtensionSectionRegistry();
   setGlobalTelegramSectionRegistry(sectionRegistry);
+
+
   const runtimeEvents = Status.createTelegramRuntimeEventRecorder({
     getBotToken: configStore.getBotToken,
   });
   const recordRuntimeEvent = runtimeEvents.record;
+  const timeInjectionRuntime = TimeInjection.createTimeInjectionRuntime({
+    getConfig: Config.createTelegramTimeConfigGetter(configStore),
+    recordRuntimeEvent,
+  });
+  (globalThis as Record<string, unknown>)[
+    VOICE_EVENT_RECORDER_KEY
+  ] = recordRuntimeEvent;
   const getContextModel = Pi.getExtensionContextModel;
   const isIdle = Pi.isExtensionContextIdle;
   const hasPendingMessages = Pi.hasExtensionContextPendingMessages;
@@ -157,6 +225,8 @@ export default function (pi: Pi.ExtensionAPI) {
     getUpdates,
     setMyCommands,
     sendTypingAction,
+    sendChatAction,
+    sendRecordVoiceAction,
     sendMessageDraft,
     sendMessage,
     downloadFile: downloadTelegramBridgeFile,
@@ -293,6 +363,12 @@ export default function (pi: Pi.ExtensionAPI) {
     editInteractiveMessage,
     sendInteractiveMessage,
     sectionRegistry,
+
+    // Used by the menu/status system to know whether the current turn is a voice reply
+    isVoiceReplyActive: function () {
+      const turn = activeTurnRuntime.get();
+      return Voice.isVoiceTurn(turn);
+    },
   });
 
   // --- Queue Menu ---
@@ -323,7 +399,12 @@ export default function (pi: Pi.ExtensionAPI) {
       sendInteractiveMessage,
       answerCallbackQuery,
       isProactivePushEnabled,
+      getVoiceReplyMode,
+      isVoiceReplyModeConfigured,
+      getTimeInjectionMode,
       setProactivePushEnabled,
+      setVoiceReplyMode,
+      setTimeInjectionMode,
     },
     sectionRegistry,
   );
@@ -358,6 +439,10 @@ export default function (pi: Pi.ExtensionAPI) {
     inboundHandlerRuntime,
     updateStatus,
     dispatchNextQueuedTelegramTurn,
+    requestDeferredDispatchNextQueuedTelegramTurn:
+      deferredQueueDispatchRuntime.request,
+    startTypingLoop: promptDispatchRuntime.startTypingLoop,
+    stopTypingLoop: typing.stop,
     answerCallbackQuery,
     editInteractiveMessage,
     sendInteractiveMessage,
@@ -367,6 +452,7 @@ export default function (pi: Pi.ExtensionAPI) {
     setMyCommands,
     getCommands,
     downloadFile: downloadTelegramBridgeFile,
+    resolveTimeLine: timeInjectionRuntime.resolveLine,
     getThinkingLevel,
     setThinkingLevel,
     persistScopedModelPatterns: Pi.createScopedModelPatternPersister({
@@ -497,6 +583,8 @@ export default function (pi: Pi.ExtensionAPI) {
       execCommand: CommandTemplates.execCommandTemplate,
       sendMultipart: callMultipart,
       sendTextReply,
+      sendChatAction,
+      sendRecordVoiceAction,
       getHandlers: configStore.getOutboundHandlers,
       recordRuntimeEvent,
     });

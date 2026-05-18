@@ -1,6 +1,6 @@
 # Inbound Handlers
 
-`pi-telegram` can run ordered inbound handlers before a Telegram turn enters the π queue. Inbound handlers are the provider-neutral Telegram → π transformation bus for raw text and downloaded media/files.
+`pi-telegram` can run ordered inbound handlers before a Telegram turn enters the π queue. Inbound handlers are the provider-neutral Telegram → π transformation bus for raw text and downloaded media/files. Extensions can also register programmatic inbound handlers with `registerTelegramInboundHandler()`, and voice extensions can register STT providers as a zero-config fallback for Telegram voice/audio files.
 
 This document is the local inbound adaptation of the portable [Command Template Standard](./command-templates.md). It is also the canonical home for the legacy `attachmentHandlers` compatibility config.
 
@@ -85,6 +85,46 @@ If a top-level one-step media handler template has no `{file}` placeholder, the 
 A handler list is ordered. For each downloaded file, matching media/file handlers run in list order and stop after the first successful handler. A composed handler counts as one handler for fallback purposes: if any step fails, the next matching handler is tried.
 
 If a matching handler fails with a non-zero exit code, the runtime records diagnostics and tries the next matching handler. If every matching handler fails, the attachment remains visible in the prompt as a normal local file reference.
+
+## Programmatic Inbound Handlers And STT Fallbacks
+
+Extensions can register programmatic inbound handlers with `registerTelegramInboundHandler(kind, handler)` from `@llblab/pi-telegram/lib/inbound-handlers.ts`. This is the code-level counterpart to configured `inboundHandlers`; use it for extension-owned transformations that are not voice-specific.
+
+Voice extensions can register STT providers with `registerTelegramVoiceTranscriptionProvider()` from `@llblab/pi-telegram/lib/voice.ts`. This is the zero-config extension path for voice/audio input: an extension such as `pi-xai-voice` can transcribe Telegram voice notes without requiring the operator to write an `inboundHandlers` command template.
+
+Priority stays explicit and predictable:
+
+1. configured `inboundHandlers`
+2. legacy `attachmentHandlers`
+3. programmatic `registerTelegramInboundHandler(kind, ...)` handlers
+4. registered STT providers for `voice`/`audio` files that still have no handler output
+5. built-in text-file fallback for text attachments
+
+```ts
+import { registerTelegramInboundHandler } from "@llblab/pi-telegram/lib/inbound-handlers.ts";
+import { registerTelegramVoiceTranscriptionProvider } from "@llblab/pi-telegram/lib/voice.ts";
+
+const disposeInbound = registerTelegramInboundHandler("document", async ({ file }) => {
+  if (!file?.mimeType?.includes("pdf")) return undefined;
+  const text = await extractPdf(file.path);
+  return text || undefined;
+});
+
+const dispose = registerTelegramVoiceTranscriptionProvider(
+  async (file) => {
+    if (file.kind !== "voice" && file.kind !== "audio") return undefined;
+    const result = await transcribe(file.path);
+    return result.text
+      ? { text: result.text, language: result.language }
+      : undefined;
+  },
+  { id: "my-stt" },
+);
+```
+
+A provider can return a plain transcript string, `{ text, language? }`, or `undefined` to pass. Provider output is injected into `[outputs]` exactly like command-template handler output. Programmatic inbound handlers and STT providers are fallbacks only; they do not override operator-configured inbound handlers.
+
+If several programmatic inbound handlers are registered for a kind, they are tried in registration order; the first non-empty output wins for media files, while text handlers transform text sequentially. If several STT providers are registered, they are tried in registration order. The first provider that returns non-empty text wins. Providers that return `undefined` pass; providers that throw are recorded and the next provider is tried. If none produces text, the voice/audio file remains as a normal attachment reference.
 
 ## Prompt Output
 
